@@ -1,8 +1,10 @@
 //! Engine process management — launching and monitoring Recoil/Spring game instances.
 
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use tokio::process::{Child, Command};
+
+use crate::lobby::protocol::ConnectSpringData;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum GameStatus {
@@ -24,9 +26,83 @@ pub struct EngineInstance {
 pub struct GameConfig {
     pub map: String,
     pub game: String,
-    pub engine_path: PathBuf,
-    pub ai_name: String,
+    pub engine_dir: PathBuf,
+    pub write_dir: PathBuf,
+    pub headless: bool,
     pub socket_path: String,
+    // Agent AI config
+    pub agent_ai: String,
+    pub agent_team: i32,
+    // Opponent AI config (local games only)
+    pub opponent_ai: Option<String>,
+    pub opponent_team: i32,
+    // Multiplayer client config
+    pub multiplayer: Option<MultiplayerConfig>,
+}
+
+#[derive(Debug, Clone)]
+pub struct MultiplayerConfig {
+    pub host_ip: String,
+    pub host_port: i32,
+    pub player_name: String,
+    pub script_password: String,
+}
+
+/// Resolve the engine binary path from an engine directory.
+pub fn resolve_engine_binary(engine_dir: &Path, headless: bool) -> PathBuf {
+    if headless {
+        engine_dir.join("spring-headless")
+    } else {
+        engine_dir.join("spring")
+    }
+}
+
+/// Find the engine directory, either by explicit version or by picking the latest.
+pub fn find_engine_dir(spring_home: &Path, version: Option<&str>) -> anyhow::Result<PathBuf> {
+    let engines_base = spring_home.join("engine/linux64");
+
+    if let Some(ver) = version {
+        // Try exact match first
+        let exact = engines_base.join(ver);
+        if exact.exists() {
+            return Ok(exact);
+        }
+        // Try with engine_linux64_ prefix
+        let prefixed = engines_base.join(format!("engine_linux64_{}", ver));
+        if prefixed.exists() {
+            return Ok(prefixed);
+        }
+        anyhow::bail!(
+            "Engine version '{}' not found in {}",
+            ver,
+            engines_base.display()
+        );
+    }
+
+    // Find latest — sort directory entries by name, take last
+    let mut entries: Vec<PathBuf> = std::fs::read_dir(&engines_base)
+        .map_err(|e| anyhow::anyhow!("Cannot read engine dir {}: {}", engines_base.display(), e))?
+        .filter_map(|e| e.ok())
+        .map(|e| e.path())
+        .filter(|p| p.is_dir())
+        .collect();
+
+    entries.sort();
+
+    let latest = entries
+        .last()
+        .ok_or_else(|| anyhow::anyhow!("No engine versions found in {}", engines_base.display()))?;
+
+    // Verify spring-headless exists
+    let headless_bin = latest.join("spring-headless");
+    if !headless_bin.exists() {
+        anyhow::bail!(
+            "spring-headless not found in {}",
+            latest.display()
+        );
+    }
+
+    Ok(latest.clone())
 }
 
 impl EngineInstance {
@@ -40,20 +116,34 @@ impl EngineInstance {
         }
     }
 
-    /// Launch the engine process with the SAI bridge configured.
+    /// Launch the engine process.
     pub async fn start(&mut self) -> Result<(), String> {
-        // Build script.txt for the engine
-        let script = self.generate_script();
-        let script_path = format!("/tmp/gm_script_{}.txt", self.channel_id);
+        let script = if self.config.multiplayer.is_some() {
+            self.generate_multiplayer_script()
+        } else {
+            self.generate_local_script()
+        };
+
+        let script_path = self
+            .config
+            .write_dir
+            .join(format!("temp/gm_script_{}.txt", self.channel_id.replace(':', "_")));
         tokio::fs::write(&script_path, &script)
             .await
             .map_err(|e| format!("Failed to write script.txt: {}", e))?;
 
-        let child = Command::new(&self.config.engine_path)
+        let engine_bin = resolve_engine_binary(&self.config.engine_dir, self.config.headless);
+        tracing::info!(
+            "Launching engine: {} --write-dir {} {}",
+            engine_bin.display(),
+            self.config.write_dir.display(),
+            script_path.display()
+        );
+
+        let child = Command::new(&engine_bin)
             .arg("--write-dir")
-            .arg("/tmp")
+            .arg(&self.config.write_dir)
             .arg(&script_path)
-            .env("SAI_SOCKET_PATH", &self.config.socket_path)
             .kill_on_drop(true)
             .spawn()
             .map_err(|e| format!("Failed to spawn engine: {}", e))?;
@@ -86,7 +176,7 @@ impl EngineInstance {
                     self.process = None;
                     false
                 }
-                Ok(None) => true, // still running
+                Ok(None) => true,
                 Err(e) => {
                     self.status = GameStatus::Crashed(e.to_string());
                     self.process = None;
@@ -98,8 +188,14 @@ impl EngineInstance {
         }
     }
 
-    fn generate_script(&self) -> String {
-        // Minimal script.txt for a skirmish game with the SAI bridge AI
+    /// Generate a local scrimmage script: spectator GameManager + AgentBridge vs opponent AI.
+    fn generate_local_script(&self) -> String {
+        let opponent = self
+            .config
+            .opponent_ai
+            .as_deref()
+            .unwrap_or("CircuitAINovice");
+
         format!(
             r#"[GAME]
 {{
@@ -109,29 +205,24 @@ impl EngineInstance {
     MyPlayerNum=0;
     MyPlayerName=GameManager;
     StartPosType=2;
-    NumPlayers=0;
-    NumUsers=2;
+    NumPlayers=1;
+    NumUsers=3;
     NumTeams=2;
     NumAllyTeams=2;
 
-    [TEAM0]
+    [PLAYER0]
     {{
-        TeamLeader=0;
-        AllyTeam=0;
-    }}
-
-    [TEAM1]
-    {{
-        TeamLeader=0;
-        AllyTeam=1;
+        Name=GameManager;
+        Team=-1;
+        Spectator=1;
     }}
 
     [AI0]
     {{
-        Name={ai_name};
-        ShortName={ai_name};
-        Team=0;
-        IsFromDemo=0;
+        Name=AgentBridge;
+        ShortName={agent_ai};
+        Version=0.1;
+        Team={agent_team};
         Host=0;
         [Options]
         {{
@@ -141,27 +232,43 @@ impl EngineInstance {
 
     [AI1]
     {{
-        Name=NullAI;
-        ShortName=NullAI;
-        Team=1;
-        IsFromDemo=0;
+        Name={opponent};
+        ShortName={opponent};
+        Team={opponent_team};
         Host=0;
     }}
 
-    [ALLYTEAM0]
-    {{
-        NumAllies=0;
-    }}
-
-    [ALLYTEAM1]
-    {{
-        NumAllies=0;
-    }}
+    [TEAM0] {{ TeamLeader=0; AllyTeam=0; }}
+    [TEAM1] {{ TeamLeader=0; AllyTeam=1; }}
+    [ALLYTEAM0] {{ NumAllies=0; }}
+    [ALLYTEAM1] {{ NumAllies=0; }}
 }}"#,
             map = self.config.map,
             game = self.config.game,
-            ai_name = self.config.ai_name,
+            agent_ai = self.config.agent_ai,
+            agent_team = self.config.agent_team,
+            opponent = opponent,
+            opponent_team = self.config.opponent_team,
             socket_path = self.config.socket_path,
+        )
+    }
+
+    /// Generate a multiplayer client script — connects to a remote game server.
+    fn generate_multiplayer_script(&self) -> String {
+        let mp = self.config.multiplayer.as_ref().unwrap();
+        format!(
+            r#"[GAME]
+{{
+    HostIP={ip};
+    HostPort={port};
+    MyPlayerName={player};
+    MyPasswd={password};
+    IsHost=0;
+}}"#,
+            ip = mp.host_ip,
+            port = mp.host_port,
+            player = mp.player_name,
+            password = mp.script_password,
         )
     }
 }
@@ -170,34 +277,85 @@ impl EngineInstance {
 pub struct EngineManager {
     pub instances: HashMap<String, EngineInstance>,
     next_id: u32,
-    pub engine_path: PathBuf,
+    pub engine_dir: PathBuf,
+    pub write_dir: PathBuf,
     pub socket_dir: String,
 }
 
 impl EngineManager {
-    pub fn new(engine_path: PathBuf, socket_dir: String) -> Self {
+    pub fn new(engine_dir: PathBuf, write_dir: PathBuf, socket_dir: String) -> Self {
         Self {
             instances: HashMap::new(),
             next_id: 1,
-            engine_path,
+            engine_dir,
+            write_dir,
             socket_dir,
         }
     }
 
-    /// Create and start a new game instance.
-    /// Returns the channel ID.
-    pub async fn start_game(&mut self, map: &str, game: &str) -> Result<String, String> {
+    /// Start a local scrimmage game: AgentBridge vs opponent AI.
+    pub async fn start_local_game(
+        &mut self,
+        map: &str,
+        game: &str,
+        opponent: Option<&str>,
+        headless: bool,
+    ) -> Result<String, String> {
         let id = self.next_id;
         self.next_id += 1;
-        let channel_id = format!("game:live-{}", id);
+        let channel_id = format!("game:local-{}", id);
         let socket_path = format!("{}/sai_{}.sock", self.socket_dir, id);
 
         let config = GameConfig {
             map: map.to_string(),
             game: game.to_string(),
-            engine_path: self.engine_path.clone(),
-            ai_name: "AgentBridge".to_string(),
+            engine_dir: self.engine_dir.clone(),
+            write_dir: self.write_dir.clone(),
+            headless,
             socket_path,
+            agent_ai: "AgentBridge".to_string(),
+            agent_team: 0,
+            opponent_ai: Some(
+                opponent.unwrap_or("CircuitAINovice").to_string(),
+            ),
+            opponent_team: 1,
+            multiplayer: None,
+        };
+
+        let mut instance = EngineInstance::new(channel_id.clone(), config);
+        instance.start().await?;
+        self.instances.insert(channel_id.clone(), instance);
+        Ok(channel_id)
+    }
+
+    /// Start a multiplayer game from a ConnectSpring lobby event.
+    pub async fn start_multiplayer_game(
+        &mut self,
+        data: &ConnectSpringData,
+        player_name: &str,
+    ) -> Result<String, String> {
+        let id = self.next_id;
+        self.next_id += 1;
+        let channel_id = format!("game:mp-{}", id);
+        let socket_path = format!("{}/sai_mp_{}.sock", self.socket_dir, id);
+
+        let config = GameConfig {
+            map: data.map.clone(),
+            game: data.game.clone(),
+            engine_dir: self.engine_dir.clone(),
+            write_dir: self.write_dir.clone(),
+            headless: true,
+            socket_path,
+            agent_ai: "AgentBridge".to_string(),
+            agent_team: 0,
+            opponent_ai: None,
+            opponent_team: 1,
+            multiplayer: Some(MultiplayerConfig {
+                host_ip: data.ip.clone(),
+                host_port: data.port,
+                player_name: player_name.to_string(),
+                script_password: data.script_password.clone(),
+            }),
         };
 
         let mut instance = EngineInstance::new(channel_id.clone(), config);
@@ -218,7 +376,6 @@ impl EngineManager {
     }
 
     /// Check all instances for crashes/exits.
-    /// Returns IDs of instances that stopped.
     pub async fn check_all(&mut self) -> Vec<(String, GameStatus)> {
         let mut changed = Vec::new();
         for (id, instance) in &mut self.instances {

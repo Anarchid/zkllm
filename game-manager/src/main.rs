@@ -2,6 +2,7 @@ mod engine;
 mod lobby;
 mod mcpl_server;
 mod sai_ipc;
+mod write_dir;
 
 use engine::EngineManager;
 use lobby::*;
@@ -9,6 +10,7 @@ use mcpl_core::connection::IncomingMessage as McplIncoming;
 use mcpl_core::methods::*;
 use mcpl_core::types::*;
 use sai_ipc::SaiIpcServer;
+use write_dir::WriteDirConfig;
 
 use std::path::PathBuf;
 use tokio::net::TcpListener;
@@ -19,16 +21,26 @@ struct GameManager {
     lobby_state: LobbyState,
     engines: EngineManager,
     sai: SaiIpcServer,
+    write_dir: PathBuf,
+    spring_home: PathBuf,
+    agent_name: String,
 }
 
 impl GameManager {
-    fn new(engine_path: PathBuf, socket_dir: String) -> Self {
+    fn new(write_dir_config: &WriteDirConfig, engine_dir: PathBuf, socket_dir: String) -> Self {
         Self {
             mcpl: None,
             lobby_conn: None,
             lobby_state: LobbyState::new(),
-            engines: EngineManager::new(engine_path, socket_dir),
+            engines: EngineManager::new(
+                engine_dir,
+                write_dir_config.write_dir.clone(),
+                socket_dir,
+            ),
             sai: SaiIpcServer::new(),
+            write_dir: write_dir_config.write_dir.clone(),
+            spring_home: write_dir_config.spring_home.clone(),
+            agent_name: write_dir_config.agent_name.clone(),
         }
     }
 
@@ -54,6 +66,7 @@ impl GameManager {
             "lobby_matchmaker_leave" => self.tool_lobby_matchmaker_leave().await,
             "lobby_matchmaker_accept" => self.tool_lobby_matchmaker_accept(args).await,
             "lobby_matchmaker_status" => self.tool_lobby_matchmaker_status().await,
+            "lobby_start_game" => self.tool_lobby_start_game(args).await,
             _ => serde_json::json!({
                 "content": [{"type": "text", "text": format!("Unknown tool: {}", name)}],
                 "isError": true
@@ -77,8 +90,17 @@ impl GameManager {
             .and_then(|a| a.get("game"))
             .and_then(|v| v.as_str())
             .unwrap_or("Zero-K v1.12.1.0");
+        let opponent = params
+            .get("address")
+            .and_then(|a| a.get("opponent"))
+            .and_then(|v| v.as_str());
+        let headless = params
+            .get("address")
+            .and_then(|a| a.get("headless"))
+            .and_then(|v| v.as_bool())
+            .unwrap_or(true);
 
-        match self.engines.start_game(map, game).await {
+        match self.engines.start_local_game(map, game, opponent, headless).await {
             Ok(channel_id) => {
                 // Set up SAI IPC listener for this channel
                 let socket_path = self
@@ -1052,6 +1074,141 @@ impl GameManager {
         }
     }
 
+    // ── Game tool implementations ──
+
+    async fn tool_lobby_start_game(
+        &mut self,
+        args: &serde_json::Value,
+    ) -> serde_json::Value {
+        let map = match args.get("map").and_then(|v| v.as_str()) {
+            Some(m) => m.to_string(),
+            None => {
+                return serde_json::json!({
+                    "content": [{"type": "text", "text": "Missing map name"}],
+                    "isError": true
+                })
+            }
+        };
+        let opponent = args
+            .get("opponent")
+            .and_then(|v| v.as_str())
+            .unwrap_or("CircuitAINovice");
+        let headless = args
+            .get("headless")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(true);
+
+        match self
+            .engines
+            .start_local_game(&map, "Zero-K $VERSION", Some(opponent), headless)
+            .await
+        {
+            Ok(channel_id) => {
+                // Set up SAI IPC listener
+                let socket_path = self
+                    .engines
+                    .instances
+                    .get(&channel_id)
+                    .map(|i| i.config.socket_path.clone())
+                    .unwrap_or_default();
+
+                if let Err(e) = self.sai.listen_for(&channel_id, &socket_path) {
+                    tracing::error!("Failed to set up SAI listener: {}", e);
+                }
+
+                // Notify channels/changed
+                self.send_channels_changed(
+                    vec![ChannelDescriptor {
+                        id: channel_id.clone(),
+                        channel_type: "game".into(),
+                        label: format!("Local game on {}", map),
+                        direction: ChannelDirection::Bidirectional,
+                        address: None,
+                        metadata: Some(serde_json::json!({
+                            "map": map,
+                            "opponent": opponent,
+                            "headless": headless,
+                            "status": "starting",
+                        })),
+                    }],
+                    vec![],
+                    vec![],
+                )
+                .await;
+
+                serde_json::json!({
+                    "content": [{"type": "text", "text": format!(
+                        "Started local game: AgentBridge vs {} on {} (channel: {}, headless: {})",
+                        opponent, map, channel_id, headless
+                    )}]
+                })
+            }
+            Err(e) => serde_json::json!({
+                "content": [{"type": "text", "text": format!("Failed to start game: {}", e)}],
+                "isError": true
+            }),
+        }
+    }
+
+    /// Handle ConnectSpring lobby event — launch engine in client mode for multiplayer.
+    async fn handle_connect_spring(&mut self, data: &ConnectSpringData) {
+        tracing::info!(
+            "ConnectSpring received: {}:{} map={} mode={}",
+            data.ip, data.port, data.map, data.mode
+        );
+
+        let player_name = self
+            .lobby_state
+            .my_username
+            .clone()
+            .unwrap_or_else(|| self.agent_name.clone());
+
+        match self
+            .engines
+            .start_multiplayer_game(data, &player_name)
+            .await
+        {
+            Ok(channel_id) => {
+                // Set up SAI IPC listener
+                let socket_path = self
+                    .engines
+                    .instances
+                    .get(&channel_id)
+                    .map(|i| i.config.socket_path.clone())
+                    .unwrap_or_default();
+
+                if let Err(e) = self.sai.listen_for(&channel_id, &socket_path) {
+                    tracing::error!("Failed to set up SAI listener for MP game: {}", e);
+                }
+
+                self.send_channels_changed(
+                    vec![ChannelDescriptor {
+                        id: channel_id.clone(),
+                        channel_type: "game".into(),
+                        label: format!("MP game on {}", data.map),
+                        direction: ChannelDirection::Bidirectional,
+                        address: None,
+                        metadata: Some(serde_json::json!({
+                            "map": data.map,
+                            "mode": data.mode,
+                            "title": data.title,
+                            "status": "connecting",
+                            "multiplayer": true,
+                        })),
+                    }],
+                    vec![],
+                    vec![],
+                )
+                .await;
+
+                tracing::info!("Launched multiplayer engine for channel {}", channel_id);
+            }
+            Err(e) => {
+                tracing::error!("Failed to launch engine for ConnectSpring: {}", e);
+            }
+        }
+    }
+
     async fn tool_lobby_matchmaker_status(&mut self) -> serde_json::Value {
         let available: Vec<serde_json::Value> = self
             .lobby_state
@@ -1219,13 +1376,16 @@ impl GameManager {
                     "Match cancelled. Not enough players accepted.".to_string()
                 },
             ),
+            LobbyEvent::ConnectSpring(_) => (
+                "lobby.connect_spring".to_string(),
+                "Game starting — engine launch initiated".to_string(),
+            ),
             // Skip high-frequency events
             LobbyEvent::UserJoined(_)
             | LobbyEvent::UserLeft { .. }
             | LobbyEvent::BattleUpdated(_)
             | LobbyEvent::ChannelUserJoined { .. }
-            | LobbyEvent::ChannelUserLeft { .. }
-            | LobbyEvent::ConnectSpring(_) => {
+            | LobbyEvent::ChannelUserLeft { .. } => {
                 return Ok(());
             }
         };
@@ -1250,6 +1410,14 @@ impl GameManager {
     }
 }
 
+/// Parse a named CLI argument: --flag value
+fn cli_arg(name: &str) -> Option<String> {
+    let args: Vec<String> = std::env::args().collect();
+    args.iter()
+        .position(|a| a == name)
+        .and_then(|i| args.get(i + 1).cloned())
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     // Tracing always goes to stderr — safe for stdio mode
@@ -1263,8 +1431,21 @@ async fn main() -> anyhow::Result<()> {
 
     let use_stdio = std::env::args().any(|a| a == "--stdio");
 
-    let engine_path = std::env::var("ENGINE_PATH")
-        .unwrap_or_else(|_| "/usr/local/bin/spring-dedicated".into());
+    // Write-dir configuration: CLI args > env vars > defaults
+    let wdc = WriteDirConfig::from_env(
+        cli_arg("--write-dir").as_deref(),
+        cli_arg("--spring-home").as_deref(),
+        cli_arg("--agent-name").as_deref(),
+    );
+
+    // Initialize write directory (creates dirs, symlinks, installs SAI bridge)
+    wdc.init()?;
+
+    // Discover engine binary
+    let engine_version = cli_arg("--engine-version");
+    let engine_dir = engine::find_engine_dir(&wdc.spring_home, engine_version.as_deref())?;
+    tracing::info!("Using engine at {}", engine_dir.display());
+
     let socket_dir = std::env::var("SOCKET_DIR").unwrap_or_else(|_| "/tmp".into());
 
     let mcpl_conn = if use_stdio {
@@ -1282,7 +1463,7 @@ async fn main() -> anyhow::Result<()> {
     };
     tracing::info!("MCPL client connected and initialized");
 
-    let mut gm = GameManager::new(PathBuf::from(engine_path), socket_dir);
+    let mut gm = GameManager::new(&wdc, engine_dir, socket_dir);
     gm.mcpl = Some(mcpl_conn);
 
     // Engine check interval
@@ -1322,6 +1503,10 @@ async fn main() -> anyhow::Result<()> {
 
                         let events = gm.lobby_state.handle_message(&msg);
                         for event in &events {
+                            // Handle ConnectSpring by launching the engine
+                            if let LobbyEvent::ConnectSpring(data) = event {
+                                gm.handle_connect_spring(data).await;
+                            }
                             if let Err(e) = gm.push_lobby_event(event).await {
                                 tracing::error!("Failed to push lobby event: {}", e);
                             }
