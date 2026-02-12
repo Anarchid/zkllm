@@ -159,6 +159,7 @@ pub fn lobby_tools() -> serde_json::Value {
                     "type": "object",
                     "properties": {
                         "map": { "type": "string", "description": "Map name (e.g., 'Comet Catcher Redux')" },
+                        "game": { "type": "string", "default": "Zero-K $VERSION", "description": "Game type / archive name" },
                         "opponent": { "type": "string", "default": "CircuitAINovice", "description": "Opponent AI shortname" },
                         "headless": { "type": "boolean", "default": true, "description": "Run without UI (true) or with UI (false)" }
                     },

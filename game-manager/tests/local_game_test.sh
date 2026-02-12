@@ -119,7 +119,6 @@ check_symlink "maps"
 check_symlink "games"
 check_symlink "engine"
 check_symlink "rapid"
-check_symlink "cache"
 
 # SAI bridge files
 check_file "AI/Skirmish/AgentBridge/0.1/libSkirmishAI.so"

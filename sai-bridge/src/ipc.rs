@@ -1,7 +1,12 @@
 //! Unix socket IPC client to GameManager.
 //!
 //! No async runtime — this runs inside the engine's thread.
-//! Uses blocking writes and non-blocking reads (polled each frame).
+//! Uses non-blocking mode with temporary blocking for writes.
+//!
+//! Note: `UnixStream::try_clone()` creates a new FD pointing to the same
+//! socket description. `set_nonblocking()` operates on the description, not
+//! the FD — so setting blocking on one clone affects the other. We use a
+//! single stream and toggle between blocking/non-blocking as needed.
 
 use crate::commands::GameCommand;
 use crate::events::GameEvent;
@@ -10,7 +15,7 @@ use std::os::unix::net::UnixStream;
 
 /// IPC connection to GameManager via Unix socket.
 pub struct IpcClient {
-    writer: UnixStream,
+    stream: UnixStream,
     reader: BufReader<UnixStream>,
     read_buf: String,
 }
@@ -19,28 +24,31 @@ impl IpcClient {
     /// Connect to the GameManager's Unix socket.
     pub fn connect(path: &str) -> io::Result<Self> {
         let stream = UnixStream::connect(path)?;
-
-        // Set non-blocking for reads (we poll each frame in EVENT_UPDATE)
         let reader_stream = stream.try_clone()?;
-        reader_stream.set_nonblocking(true)?;
 
-        // Writer stays blocking — sends are immediate and small
-        stream.set_nonblocking(false)?;
+        // Start in non-blocking mode (poll_commands is called every frame)
+        stream.set_nonblocking(true)?;
 
         Ok(Self {
-            writer: stream,
+            stream,
             reader: BufReader::new(reader_stream),
             read_buf: String::new(),
         })
     }
 
     /// Send a game event to GameManager.
-    /// Format: one JSON object per line.
+    /// Temporarily switches to blocking mode for the write.
     pub fn send_event(&mut self, event: &GameEvent) -> io::Result<()> {
         let json = serde_json::to_string(event).map_err(|e| io::Error::other(e.to_string()))?;
-        self.writer.write_all(json.as_bytes())?;
-        self.writer.write_all(b"\n")?;
-        self.writer.flush()
+
+        // Briefly switch to blocking for reliable write
+        self.stream.set_nonblocking(false)?;
+        self.stream.write_all(json.as_bytes())?;
+        self.stream.write_all(b"\n")?;
+        self.stream.flush()?;
+        self.stream.set_nonblocking(true)?;
+
+        Ok(())
     }
 
     /// Poll for commands from GameManager (non-blocking).
@@ -77,7 +85,6 @@ impl IpcClient {
 
     /// Check if the connection is still alive.
     pub fn is_connected(&self) -> bool {
-        // Try a zero-byte write to check connection
-        self.writer.try_clone().is_ok()
+        self.stream.try_clone().is_ok()
     }
 }

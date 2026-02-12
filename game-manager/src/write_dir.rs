@@ -8,6 +8,9 @@
 use std::path::{Path, PathBuf};
 
 /// Directories to symlink from spring_home into the agent write-dir.
+/// Note: `cache` is intentionally excluded — ArchiveCache20.lua stores absolute
+/// paths, so sharing it across different write-dirs causes a full rescan anyway,
+/// and writing back would clobber the human player's cache.
 const SHARED_DIRS: &[&str] = &[
     "pool",
     "packages",
@@ -15,7 +18,6 @@ const SHARED_DIRS: &[&str] = &[
     "games",
     "engine",
     "rapid",
-    "cache",
 ];
 
 /// Initialize the agent write directory.
@@ -265,7 +267,6 @@ impl WriteDirConfig {
 }
 
 const HEADLESS_SETTINGS: &str = "\
-; Agent springsettings — headless-friendly defaults
 XResolution=1
 YResolution=1
 WindowState=0

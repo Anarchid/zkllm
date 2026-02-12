@@ -1093,6 +1093,10 @@ impl GameManager {
             .get("opponent")
             .and_then(|v| v.as_str())
             .unwrap_or("CircuitAINovice");
+        let game = args
+            .get("game")
+            .and_then(|v| v.as_str())
+            .unwrap_or("Zero-K $VERSION");
         let headless = args
             .get("headless")
             .and_then(|v| v.as_bool())
@@ -1100,7 +1104,7 @@ impl GameManager {
 
         match self
             .engines
-            .start_local_game(&map, "Zero-K $VERSION", Some(opponent), headless)
+            .start_local_game(&map, game, Some(opponent), headless)
             .await
         {
             Ok(channel_id) => {

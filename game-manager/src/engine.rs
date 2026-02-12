@@ -144,6 +144,8 @@ impl EngineInstance {
             .arg("--write-dir")
             .arg(&self.config.write_dir)
             .arg(&script_path)
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
             .kill_on_drop(true)
             .spawn()
             .map_err(|e| format!("Failed to spawn engine: {}", e))?;
