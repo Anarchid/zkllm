@@ -1,0 +1,4 @@
+target/
+app/.env
+app/node_modules/
+app/data/
