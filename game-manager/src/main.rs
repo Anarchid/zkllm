@@ -301,7 +301,7 @@ impl GameManager {
         let msg_id = uuid::Uuid::new_v4().to_string();
 
         let params = ChannelsIncomingParams {
-            messages: vec![mcpl_core::methods::IncomingMessage {
+            messages: vec![mcpl_core::methods::IncomingChannelMessage {
                 channel_id: channel_id.to_string(),
                 message_id: msg_id,
                 thread_id: None,
