@@ -94,6 +94,19 @@ pub struct JoinBattleCommand {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "PascalCase")]
+pub struct JoinBattleSuccessData {
+    #[serde(rename = "BattleID")]
+    pub battle_id: i64,
+    #[serde(default)]
+    pub players: Vec<serde_json::Value>,
+    #[serde(default)]
+    pub bots: Vec<serde_json::Value>,
+    #[serde(default)]
+    pub options: serde_json::Map<String, serde_json::Value>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "PascalCase")]
 pub struct LeaveBattleCommand {
     #[serde(rename = "BattleID", skip_serializing_if = "Option::is_none")]
     pub battle_id: Option<i64>,

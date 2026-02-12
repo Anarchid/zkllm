@@ -342,9 +342,59 @@ impl GameManager {
         }
     }
 
+    /// Read lobby messages until we see `response_command`, or timeout.
+    /// Handles pings and updates lobby state for other messages while waiting.
+    /// Takes the connection out of self to satisfy the borrow checker.
+    async fn await_lobby_response(
+        &mut self,
+        response_command: &str,
+        timeout_secs: u64,
+    ) -> Result<serde_json::Value, String> {
+        let mut conn = match self.lobby_conn.take() {
+            Some(c) => c,
+            None => return Err("Not connected".into()),
+        };
+
+        let deadline = tokio::time::Instant::now()
+            + tokio::time::Duration::from_secs(timeout_secs);
+
+        let result = loop {
+            let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+            if remaining.is_zero() {
+                break Err(format!("Timed out waiting for {}", response_command));
+            }
+
+            match tokio::time::timeout(remaining, conn.recv()).await {
+                Ok(Ok(msg)) => {
+                    if msg.command == response_command {
+                        break Ok(msg.data);
+                    }
+                    // Handle keepalive
+                    if msg.command == "Ping" {
+                        let pong = LobbyMessage::new("Ping", serde_json::json!({}));
+                        let _ = conn.send(&pong).await;
+                        continue;
+                    }
+                    // Process other messages for state updates
+                    self.lobby_state.handle_message(&msg);
+                }
+                Ok(Err(e)) => {
+                    self.lobby_conn = Some(conn);
+                    return Err(format!("Connection error: {}", e));
+                }
+                Err(_) => {
+                    break Err(format!("Timed out waiting for {}", response_command));
+                }
+            }
+        };
+
+        self.lobby_conn = Some(conn);
+        result
+    }
+
     async fn tool_lobby_login(&mut self, args: &serde_json::Value) -> serde_json::Value {
         let username = match args.get("username").and_then(|v| v.as_str()) {
-            Some(u) => u,
+            Some(u) => u.to_string(),
             None => {
                 return serde_json::json!({
                     "content": [{"type": "text", "text": "Missing username"}],
@@ -362,18 +412,15 @@ impl GameManager {
             }
         };
 
-        let conn = match &mut self.lobby_conn {
-            Some(c) => c,
-            None => {
-                return serde_json::json!({
-                    "content": [{"type": "text", "text": "Not connected to lobby. Call lobby_connect first."}],
-                    "isError": true
-                })
-            }
-        };
+        if self.lobby_conn.is_none() {
+            return serde_json::json!({
+                "content": [{"type": "text", "text": "Not connected to lobby. Call lobby_connect first."}],
+                "isError": true
+            });
+        }
 
         let cmd = LoginCommand {
-            name: username.to_string(),
+            name: username.clone(),
             password_hash: hash_password(password),
             user_id: 0,
             install_id: 0,
@@ -382,21 +429,48 @@ impl GameManager {
             dlc: String::new(),
         };
 
-        if let Err(e) = conn.send_command("Login", &cmd).await {
-            return serde_json::json!({
-                "content": [{"type": "text", "text": format!("Failed to send login: {}", e)}],
-                "isError": true
-            });
+        if let Some(conn) = &mut self.lobby_conn {
+            if let Err(e) = conn.send_command("Login", &cmd).await {
+                return serde_json::json!({
+                    "content": [{"type": "text", "text": format!("Failed to send login: {}", e)}],
+                    "isError": true
+                });
+            }
         }
 
-        serde_json::json!({
-            "content": [{"type": "text", "text": format!("Login sent for user '{}'. Waiting for server response...", username)}]
-        })
+        // Wait for the correlated response
+        match self.await_lobby_response("LoginResponse", 10).await {
+            Ok(data) => {
+                if let Ok(resp) = serde_json::from_value::<LoginResponseData>(data) {
+                    if resp.result_code == LOGIN_OK {
+                        self.lobby_state.logged_in = true;
+                        self.lobby_state.my_username = Some(resp.name.clone());
+                        serde_json::json!({
+                            "content": [{"type": "text", "text": format!("Logged in as '{}'", resp.name)}]
+                        })
+                    } else {
+                        serde_json::json!({
+                            "content": [{"type": "text", "text": format!("Login failed (code {}): {}", resp.result_code, resp.message)}],
+                            "isError": true
+                        })
+                    }
+                } else {
+                    serde_json::json!({
+                        "content": [{"type": "text", "text": "Login response unparseable"}],
+                        "isError": true
+                    })
+                }
+            }
+            Err(e) => serde_json::json!({
+                "content": [{"type": "text", "text": e}],
+                "isError": true
+            }),
+        }
     }
 
     async fn tool_lobby_register(&mut self, args: &serde_json::Value) -> serde_json::Value {
         let username = match args.get("username").and_then(|v| v.as_str()) {
-            Some(u) => u,
+            Some(u) => u.to_string(),
             None => {
                 return serde_json::json!({
                     "content": [{"type": "text", "text": "Missing username"}],
@@ -423,18 +497,15 @@ impl GameManager {
             }
         };
 
-        let conn = match &mut self.lobby_conn {
-            Some(c) => c,
-            None => {
-                return serde_json::json!({
-                    "content": [{"type": "text", "text": "Not connected to lobby. Call lobby_connect first."}],
-                    "isError": true
-                })
-            }
-        };
+        if self.lobby_conn.is_none() {
+            return serde_json::json!({
+                "content": [{"type": "text", "text": "Not connected to lobby. Call lobby_connect first."}],
+                "isError": true
+            });
+        }
 
         let cmd = RegisterCommand {
-            name: username.to_string(),
+            name: username.clone(),
             password_hash: hash_password(password),
             email: email.to_string(),
             user_id: 0,
@@ -443,16 +514,42 @@ impl GameManager {
             dlc: String::new(),
         };
 
-        if let Err(e) = conn.send_command("Register", &cmd).await {
-            return serde_json::json!({
-                "content": [{"type": "text", "text": format!("Failed to send register: {}", e)}],
-                "isError": true
-            });
+        if let Some(conn) = &mut self.lobby_conn {
+            if let Err(e) = conn.send_command("Register", &cmd).await {
+                return serde_json::json!({
+                    "content": [{"type": "text", "text": format!("Failed to send register: {}", e)}],
+                    "isError": true
+                });
+            }
         }
 
-        serde_json::json!({
-            "content": [{"type": "text", "text": format!("Registration sent for user '{}' with email '{}'. Waiting for server response...", username, email)}]
-        })
+        // Wait for the correlated response
+        match self.await_lobby_response("RegisterResponse", 10).await {
+            Ok(data) => {
+                if let Ok(resp) = serde_json::from_value::<RegisterResponseData>(data) {
+                    if resp.result_code == REGISTER_OK {
+                        serde_json::json!({
+                            "content": [{"type": "text", "text": format!("Account '{}' registered successfully", username)}]
+                        })
+                    } else {
+                        let reason = resp.ban_reason.unwrap_or_default();
+                        serde_json::json!({
+                            "content": [{"type": "text", "text": format!("Registration failed (code {}): {}", resp.result_code, reason)}],
+                            "isError": true
+                        })
+                    }
+                } else {
+                    serde_json::json!({
+                        "content": [{"type": "text", "text": "Register response unparseable"}],
+                        "isError": true
+                    })
+                }
+            }
+            Err(e) => serde_json::json!({
+                "content": [{"type": "text", "text": e}],
+                "isError": true
+            }),
+        }
     }
 
     async fn tool_lobby_disconnect(&mut self) -> serde_json::Value {
@@ -520,7 +617,7 @@ impl GameManager {
         args: &serde_json::Value,
     ) -> serde_json::Value {
         let channel = match args.get("channel").and_then(|v| v.as_str()) {
-            Some(c) => c,
+            Some(c) => c.to_string(),
             None => {
                 return serde_json::json!({
                     "content": [{"type": "text", "text": "Missing channel"}],
@@ -529,27 +626,57 @@ impl GameManager {
             }
         };
 
-        let conn = match &mut self.lobby_conn {
-            Some(c) => c,
-            None => {
-                return serde_json::json!({
-                    "content": [{"type": "text", "text": "Not connected"}],
-                    "isError": true
-                })
-            }
-        };
+        if self.lobby_conn.is_none() {
+            return serde_json::json!({
+                "content": [{"type": "text", "text": "Not connected"}],
+                "isError": true
+            });
+        }
 
         let cmd = JoinChannelCommand {
-            channel_name: channel.to_string(),
+            channel_name: channel.clone(),
             password: String::new(),
         };
 
-        match conn.send_command("JoinChannel", &cmd).await {
-            Ok(()) => serde_json::json!({
-                "content": [{"type": "text", "text": format!("Join request sent for #{}", channel)}]
-            }),
+        if let Some(conn) = &mut self.lobby_conn {
+            if let Err(e) = conn.send_command("JoinChannel", &cmd).await {
+                return serde_json::json!({
+                    "content": [{"type": "text", "text": format!("Failed: {}", e)}],
+                    "isError": true
+                });
+            }
+        }
+
+        match self.await_lobby_response("JoinChannelResponse", 10).await {
+            Ok(data) => {
+                if let Ok(resp) = serde_json::from_value::<JoinChannelResponseData>(data) {
+                    if resp.success {
+                        let user_count = resp.channel.as_ref()
+                            .map(|c| c.users.len())
+                            .unwrap_or(0);
+                        let topic = resp.channel.as_ref()
+                            .and_then(|c| c.topic.as_ref())
+                            .map(|t| t.text.clone())
+                            .unwrap_or_default();
+                        // State update is handled by await_lobby_response via handle_message
+                        serde_json::json!({
+                            "content": [{"type": "text", "text": format!("Joined #{} ({} users). Topic: {}", channel, user_count, if topic.is_empty() { "(none)".into() } else { topic })}]
+                        })
+                    } else {
+                        serde_json::json!({
+                            "content": [{"type": "text", "text": format!("Failed to join #{}: rejected by server", channel)}],
+                            "isError": true
+                        })
+                    }
+                } else {
+                    serde_json::json!({
+                        "content": [{"type": "text", "text": "Join response unparseable"}],
+                        "isError": true
+                    })
+                }
+            }
             Err(e) => serde_json::json!({
-                "content": [{"type": "text", "text": format!("Failed: {}", e)}],
+                "content": [{"type": "text", "text": e}],
                 "isError": true
             }),
         }
@@ -674,30 +801,47 @@ impl GameManager {
             .and_then(|v| v.as_str())
             .unwrap_or("");
 
-        let conn = match &mut self.lobby_conn {
-            Some(c) => c,
-            None => {
-                return serde_json::json!({
-                    "content": [{"type": "text", "text": "Not connected"}],
-                    "isError": true
-                })
-            }
-        };
+        if self.lobby_conn.is_none() {
+            return serde_json::json!({
+                "content": [{"type": "text", "text": "Not connected"}],
+                "isError": true
+            });
+        }
 
         let cmd = JoinBattleCommand {
             battle_id,
             password: password.to_string(),
         };
 
-        match conn.send_command("JoinBattle", &cmd).await {
-            Ok(()) => {
-                self.lobby_state.my_battle = Some(battle_id);
-                serde_json::json!({
-                    "content": [{"type": "text", "text": format!("Join request sent for battle {}", battle_id)}]
-                })
+        if let Some(conn) = &mut self.lobby_conn {
+            if let Err(e) = conn.send_command("JoinBattle", &cmd).await {
+                return serde_json::json!({
+                    "content": [{"type": "text", "text": format!("Failed: {}", e)}],
+                    "isError": true
+                });
+            }
+        }
+
+        // ZKLS has no explicit failure message for JoinBattle — only JoinBattleSuccess on success.
+        // Timeout means rejection (wrong password, battle full, etc.)
+        match self.await_lobby_response("JoinBattleSuccess", 10).await {
+            Ok(data) => {
+                if let Ok(resp) = serde_json::from_value::<JoinBattleSuccessData>(data) {
+                    self.lobby_state.my_battle = Some(resp.battle_id);
+                    let player_count = resp.players.len();
+                    let bot_count = resp.bots.len();
+                    serde_json::json!({
+                        "content": [{"type": "text", "text": format!("Joined battle {} ({} players, {} bots)", resp.battle_id, player_count, bot_count)}]
+                    })
+                } else {
+                    self.lobby_state.my_battle = Some(battle_id);
+                    serde_json::json!({
+                        "content": [{"type": "text", "text": format!("Joined battle {}", battle_id)}]
+                    })
+                }
             }
             Err(e) => serde_json::json!({
-                "content": [{"type": "text", "text": format!("Failed: {}", e)}],
+                "content": [{"type": "text", "text": format!("Failed to join battle {}: {}", battle_id, e)}],
                 "isError": true
             }),
         }
