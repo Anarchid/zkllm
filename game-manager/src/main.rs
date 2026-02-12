@@ -50,6 +50,10 @@ impl GameManager {
             "lobby_list_users" => self.tool_lobby_list_users(args).await,
             "lobby_join_battle" => self.tool_lobby_join_battle(args).await,
             "lobby_leave_battle" => self.tool_lobby_leave_battle().await,
+            "lobby_matchmaker_join" => self.tool_lobby_matchmaker_join(args).await,
+            "lobby_matchmaker_leave" => self.tool_lobby_matchmaker_leave().await,
+            "lobby_matchmaker_accept" => self.tool_lobby_matchmaker_accept(args).await,
+            "lobby_matchmaker_status" => self.tool_lobby_matchmaker_status().await,
             _ => serde_json::json!({
                 "content": [{"type": "text", "text": format!("Unknown tool: {}", name)}],
                 "isError": true
@@ -874,6 +878,214 @@ impl GameManager {
         }
     }
 
+    // ── Matchmaker tool implementations ──
+
+    async fn tool_lobby_matchmaker_join(
+        &mut self,
+        args: &serde_json::Value,
+    ) -> serde_json::Value {
+        let queues: Vec<String> = match args.get("queues").and_then(|v| v.as_array()) {
+            Some(arr) => arr
+                .iter()
+                .filter_map(|v| v.as_str().map(String::from))
+                .collect(),
+            None => {
+                return serde_json::json!({
+                    "content": [{"type": "text", "text": "Missing queues array"}],
+                    "isError": true
+                })
+            }
+        };
+
+        if queues.is_empty() {
+            return serde_json::json!({
+                "content": [{"type": "text", "text": "Queues array is empty. Use lobby_matchmaker_leave to leave all queues."}],
+                "isError": true
+            });
+        }
+
+        if self.lobby_conn.is_none() {
+            return serde_json::json!({
+                "content": [{"type": "text", "text": "Not connected"}],
+                "isError": true
+            });
+        }
+
+        let cmd = MatchMakerQueueRequestCommand {
+            queues: queues.clone(),
+        };
+
+        if let Some(conn) = &mut self.lobby_conn {
+            if let Err(e) = conn.send_command("MatchMakerQueueRequest", &cmd).await {
+                return serde_json::json!({
+                    "content": [{"type": "text", "text": format!("Failed: {}", e)}],
+                    "isError": true
+                });
+            }
+        }
+
+        // Wait for MatchMakerStatus response confirming our queue state
+        match self.await_lobby_response("MatchMakerStatus", 10).await {
+            Ok(data) => {
+                if let Ok(status) = serde_json::from_value::<MatchMakerStatusData>(data) {
+                    self.lobby_state.matchmaker_joined = status.joined_queues.clone();
+                    self.lobby_state.matchmaker_queue_counts = status.queue_counts.clone();
+                    let joined = status.joined_queues.join(", ");
+                    let counts: Vec<String> = status
+                        .queue_counts
+                        .iter()
+                        .filter(|(name, _)| status.joined_queues.contains(name))
+                        .map(|(name, count)| format!("{}: {} queued", name, count))
+                        .collect();
+                    if status.joined_queues.is_empty() {
+                        serde_json::json!({
+                            "content": [{"type": "text", "text": format!("Failed to join queues (may be banned for {}s)", status.banned_seconds.unwrap_or(0))}],
+                            "isError": true
+                        })
+                    } else {
+                        serde_json::json!({
+                            "content": [{"type": "text", "text": format!("Joined matchmaker queues: [{}]. {}", joined, counts.join(", "))}]
+                        })
+                    }
+                } else {
+                    serde_json::json!({
+                        "content": [{"type": "text", "text": "MatchMakerStatus unparseable"}],
+                        "isError": true
+                    })
+                }
+            }
+            Err(e) => serde_json::json!({
+                "content": [{"type": "text", "text": e}],
+                "isError": true
+            }),
+        }
+    }
+
+    async fn tool_lobby_matchmaker_leave(&mut self) -> serde_json::Value {
+        if self.lobby_conn.is_none() {
+            return serde_json::json!({
+                "content": [{"type": "text", "text": "Not connected"}],
+                "isError": true
+            });
+        }
+
+        let cmd = MatchMakerQueueRequestCommand {
+            queues: vec![],
+        };
+
+        if let Some(conn) = &mut self.lobby_conn {
+            if let Err(e) = conn.send_command("MatchMakerQueueRequest", &cmd).await {
+                return serde_json::json!({
+                    "content": [{"type": "text", "text": format!("Failed: {}", e)}],
+                    "isError": true
+                });
+            }
+        }
+
+        match self.await_lobby_response("MatchMakerStatus", 10).await {
+            Ok(data) => {
+                if let Ok(status) = serde_json::from_value::<MatchMakerStatusData>(data) {
+                    self.lobby_state.matchmaker_joined = status.joined_queues.clone();
+                    self.lobby_state.matchmaker_queue_counts = status.queue_counts.clone();
+                    serde_json::json!({
+                        "content": [{"type": "text", "text": "Left all matchmaker queues"}]
+                    })
+                } else {
+                    self.lobby_state.matchmaker_joined.clear();
+                    serde_json::json!({
+                        "content": [{"type": "text", "text": "Left matchmaker queues"}]
+                    })
+                }
+            }
+            Err(e) => {
+                // Even on timeout, we likely left — the server might not send status
+                // if we weren't in any queue
+                self.lobby_state.matchmaker_joined.clear();
+                tracing::debug!("MatchMakerStatus await after leave: {}", e);
+                serde_json::json!({
+                    "content": [{"type": "text", "text": "Left matchmaker queues"}]
+                })
+            }
+        }
+    }
+
+    async fn tool_lobby_matchmaker_accept(
+        &mut self,
+        args: &serde_json::Value,
+    ) -> serde_json::Value {
+        let ready = args
+            .get("ready")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(true);
+
+        let conn = match &mut self.lobby_conn {
+            Some(c) => c,
+            None => {
+                return serde_json::json!({
+                    "content": [{"type": "text", "text": "Not connected"}],
+                    "isError": true
+                })
+            }
+        };
+
+        if !self.lobby_state.matchmaker_ready_pending {
+            return serde_json::json!({
+                "content": [{"type": "text", "text": "No ready-check pending"}],
+                "isError": true
+            });
+        }
+
+        let cmd = AreYouReadyResponseCommand { ready };
+
+        match conn.send_command("AreYouReadyResponse", &cmd).await {
+            Ok(()) => {
+                self.lobby_state.matchmaker_ready_pending = false;
+                let action = if ready { "Accepted" } else { "Declined" };
+                serde_json::json!({
+                    "content": [{"type": "text", "text": format!("{} matchmaker ready-check", action)}]
+                })
+            }
+            Err(e) => serde_json::json!({
+                "content": [{"type": "text", "text": format!("Failed: {}", e)}],
+                "isError": true
+            }),
+        }
+    }
+
+    async fn tool_lobby_matchmaker_status(&mut self) -> serde_json::Value {
+        let available: Vec<serde_json::Value> = self
+            .lobby_state
+            .matchmaker_queues
+            .iter()
+            .map(|q| {
+                let count = self
+                    .lobby_state
+                    .matchmaker_queue_counts
+                    .get(&q.name)
+                    .copied()
+                    .unwrap_or(0);
+                serde_json::json!({
+                    "name": q.name,
+                    "description": q.description,
+                    "maxPartySize": q.max_party_size,
+                    "queued": count,
+                })
+            })
+            .collect();
+
+        let joined = &self.lobby_state.matchmaker_joined;
+        let ready_pending = self.lobby_state.matchmaker_ready_pending;
+
+        serde_json::json!({
+            "content": [{"type": "text", "text": format!(
+                "Joined queues: [{}]\nReady-check pending: {}\nAvailable queues:\n{}",
+                joined.join(", "),
+                ready_pending,
+                serde_json::to_string_pretty(&available).unwrap()
+            )}]
+        })
+    }
+
     /// Convert a lobby event to an MCPL push event and send it.
     async fn push_lobby_event(
         &mut self,
@@ -950,6 +1162,62 @@ impl GameManager {
                     users.len(),
                     topic.as_deref().unwrap_or("(none)")
                 ),
+            ),
+            LobbyEvent::MatchMakerSetup { queues } => {
+                let names: Vec<&str> = queues.iter().map(|q| q.name.as_str()).collect();
+                (
+                    "lobby.matchmaker_setup".to_string(),
+                    format!("Matchmaker queues available: {}", names.join(", ")),
+                )
+            }
+            LobbyEvent::MatchMakerStatus(status) => {
+                let joined = status.joined_queues.join(", ");
+                let counts: Vec<String> = status
+                    .queue_counts
+                    .iter()
+                    .map(|(k, v)| format!("{}: {}", k, v))
+                    .collect();
+                (
+                    "lobby.matchmaker_status".to_string(),
+                    format!(
+                        "Matchmaker status — Joined: [{}], Counts: [{}]",
+                        joined,
+                        counts.join(", ")
+                    ),
+                )
+            }
+            LobbyEvent::MatchMakerReady {
+                seconds_remaining,
+                quick_play,
+            } => (
+                "lobby.matchmaker_ready".to_string(),
+                format!(
+                    "MATCH FOUND! Accept within {}s (quickplay: {}). Use lobby_matchmaker_accept to respond.",
+                    seconds_remaining, quick_play
+                ),
+            ),
+            LobbyEvent::MatchMakerReadyUpdate(update) => (
+                "lobby.matchmaker_ready_update".to_string(),
+                format!(
+                    "Ready-check update: accepted={}, likely_to_play={}, battle_size={:?}, battle_ready={:?}",
+                    update.ready_accepted,
+                    update.likely_to_play,
+                    update.your_battle_size,
+                    update.your_battle_ready
+                ),
+            ),
+            LobbyEvent::MatchMakerResult {
+                is_battle_starting,
+                are_you_banned,
+            } => (
+                "lobby.matchmaker_result".to_string(),
+                if *is_battle_starting {
+                    "Match starting! ConnectSpring will follow.".to_string()
+                } else if *are_you_banned {
+                    "Match cancelled. You have been temporarily banned for not accepting.".to_string()
+                } else {
+                    "Match cancelled. Not enough players accepted.".to_string()
+                },
             ),
             // Skip high-frequency events
             LobbyEvent::UserJoined(_)

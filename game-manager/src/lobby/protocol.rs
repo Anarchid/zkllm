@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use serde::{Deserialize, Serialize};
 
 /// A parsed lobby protocol message: `CommandName JSON\n`
@@ -350,6 +352,108 @@ pub const LOGIN_OK: i32 = 0;
 pub const LOGIN_INVALID_NAME: i32 = 1;
 pub const LOGIN_INVALID_PASSWORD: i32 = 2;
 pub const LOGIN_BANNED: i32 = 4;
+
+// ── Matchmaker messages ──
+
+/// Server → Client: sent on login, lists available matchmaker queues.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "PascalCase")]
+pub struct MatchMakerSetupData {
+    #[serde(default)]
+    pub possible_queues: Vec<QueueInfo>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "PascalCase")]
+pub struct QueueInfo {
+    #[serde(default)]
+    pub name: String,
+    #[serde(default)]
+    pub description: String,
+    #[serde(default)]
+    pub maps: Vec<String>,
+    #[serde(default)]
+    pub game: String,
+    #[serde(default)]
+    pub max_party_size: i32,
+}
+
+/// Client → Server: request to join/leave matchmaker queues.
+/// Send empty Queues list to leave all queues.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "PascalCase")]
+pub struct MatchMakerQueueRequestCommand {
+    pub queues: Vec<String>,
+}
+
+/// Server → Client: matchmaker status update.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "PascalCase")]
+pub struct MatchMakerStatusData {
+    #[serde(default)]
+    pub joined_queues: Vec<String>,
+    #[serde(default)]
+    pub queue_counts: HashMap<String, i32>,
+    #[serde(default)]
+    pub current_elo_width: Option<i32>,
+    #[serde(default)]
+    pub joined_time: Option<String>,
+    #[serde(default)]
+    pub banned_seconds: Option<i32>,
+    #[serde(default)]
+    pub instant_start_queues: Vec<String>,
+    #[serde(default)]
+    pub ingame_counts: HashMap<String, i32>,
+    #[serde(default)]
+    pub user_count: i32,
+    #[serde(default)]
+    pub user_count_discord: i32,
+}
+
+/// Server → Client: match found, asking player to accept.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "PascalCase")]
+pub struct AreYouReadyData {
+    #[serde(default)]
+    pub minimum_win_chance: f64,
+    #[serde(default)]
+    pub quick_play: bool,
+    #[serde(default)]
+    pub seconds_remaining: i32,
+}
+
+/// Client → Server: accept/decline match.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "PascalCase")]
+pub struct AreYouReadyResponseCommand {
+    pub ready: bool,
+}
+
+/// Server → Client: live status while waiting for all players.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "PascalCase")]
+pub struct AreYouReadyUpdateData {
+    #[serde(default)]
+    pub ready_accepted: bool,
+    #[serde(default)]
+    pub likely_to_play: bool,
+    #[serde(default)]
+    pub queue_ready_counts: HashMap<String, i32>,
+    #[serde(default)]
+    pub your_battle_size: Option<i32>,
+    #[serde(default)]
+    pub your_battle_ready: Option<i32>,
+}
+
+/// Server → Client: final match result.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "PascalCase")]
+pub struct AreYouReadyResultData {
+    #[serde(default)]
+    pub is_battle_starting: bool,
+    #[serde(default)]
+    pub are_you_banned: bool,
+}
 
 /// Create MD5 password hash for login.
 pub fn hash_password(password: &str) -> String {

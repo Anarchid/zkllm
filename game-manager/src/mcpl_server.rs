@@ -115,6 +115,42 @@ pub fn lobby_tools() -> serde_json::Value {
                 "name": "lobby_leave_battle",
                 "description": "Leave the current battle",
                 "inputSchema": { "type": "object" }
+            },
+            {
+                "name": "lobby_matchmaker_join",
+                "description": "Join matchmaker queues. Available queues are sent on login (e.g. '1v1', 'Sortie', 'Battle', 'Coop'). Can join multiple simultaneously.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "queues": {
+                            "type": "array",
+                            "items": { "type": "string" },
+                            "description": "Queue names to join (e.g. ['1v1', 'Sortie'])"
+                        }
+                    },
+                    "required": ["queues"]
+                }
+            },
+            {
+                "name": "lobby_matchmaker_leave",
+                "description": "Leave all matchmaker queues",
+                "inputSchema": { "type": "object" }
+            },
+            {
+                "name": "lobby_matchmaker_accept",
+                "description": "Accept or decline a matchmaker ready-check when a match is found",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "ready": { "type": "boolean", "description": "true to accept, false to decline" }
+                    },
+                    "required": ["ready"]
+                }
+            },
+            {
+                "name": "lobby_matchmaker_status",
+                "description": "Get current matchmaker status: available queues, joined queues, queue counts",
+                "inputSchema": { "type": "object" }
             }
         ]
     })

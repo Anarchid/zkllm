@@ -15,6 +15,11 @@ pub struct LobbyState {
     pub battles: HashMap<i64, BattleInfo>,
     pub channels: HashMap<String, ChannelInfo>,
     pub my_battle: Option<i64>,
+    // Matchmaker state
+    pub matchmaker_queues: Vec<QueueInfo>,
+    pub matchmaker_joined: Vec<String>,
+    pub matchmaker_queue_counts: HashMap<String, i32>,
+    pub matchmaker_ready_pending: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -73,6 +78,12 @@ pub enum LobbyEvent {
     ChannelUserJoined { channel: String, user: String },
     ChannelUserLeft { channel: String, user: String },
     ConnectSpring(ConnectSpringData),
+    // Matchmaker events
+    MatchMakerSetup { queues: Vec<QueueInfo> },
+    MatchMakerStatus(MatchMakerStatusData),
+    MatchMakerReady { seconds_remaining: i32, quick_play: bool },
+    MatchMakerReadyUpdate(AreYouReadyUpdateData),
+    MatchMakerResult { is_battle_starting: bool, are_you_banned: bool },
 }
 
 impl LobbyState {
@@ -234,6 +245,45 @@ impl LobbyState {
             "ConnectSpring" => {
                 if let Ok(data) = serde_json::from_value::<ConnectSpringData>(msg.data.clone()) {
                     events.push(LobbyEvent::ConnectSpring(data));
+                }
+            }
+            "MatchMakerSetup" => {
+                if let Ok(data) = serde_json::from_value::<MatchMakerSetupData>(msg.data.clone()) {
+                    self.matchmaker_queues = data.possible_queues.clone();
+                    events.push(LobbyEvent::MatchMakerSetup { queues: data.possible_queues });
+                }
+            }
+            "MatchMakerStatus" => {
+                if let Ok(data) = serde_json::from_value::<MatchMakerStatusData>(msg.data.clone()) {
+                    self.matchmaker_joined = data.joined_queues.clone();
+                    self.matchmaker_queue_counts = data.queue_counts.clone();
+                    events.push(LobbyEvent::MatchMakerStatus(data));
+                }
+            }
+            "AreYouReady" => {
+                if let Ok(data) = serde_json::from_value::<AreYouReadyData>(msg.data.clone()) {
+                    self.matchmaker_ready_pending = true;
+                    events.push(LobbyEvent::MatchMakerReady {
+                        seconds_remaining: data.seconds_remaining,
+                        quick_play: data.quick_play,
+                    });
+                }
+            }
+            "AreYouReadyUpdate" => {
+                if let Ok(data) = serde_json::from_value::<AreYouReadyUpdateData>(msg.data.clone()) {
+                    events.push(LobbyEvent::MatchMakerReadyUpdate(data));
+                }
+            }
+            "AreYouReadyResult" => {
+                if let Ok(data) = serde_json::from_value::<AreYouReadyResultData>(msg.data.clone()) {
+                    self.matchmaker_ready_pending = false;
+                    if data.is_battle_starting {
+                        self.matchmaker_joined.clear();
+                    }
+                    events.push(LobbyEvent::MatchMakerResult {
+                        is_battle_starting: data.is_battle_starting,
+                        are_you_banned: data.are_you_banned,
+                    });
                 }
             }
             "Ping" => {
