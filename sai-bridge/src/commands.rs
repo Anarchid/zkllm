@@ -325,7 +325,7 @@ pub fn dispatch(cb: &EngineCallbacks, cmd: &GameCommand) -> Result<(), String> {
         GameCommand::Pause => {
             let mut data = SPauseCommand {
                 enable: true,
-                is_message: false,
+                reason: std::ptr::null(),
             };
             cb.handle_command(0, COMMAND_PAUSE, &mut data as *mut _ as *mut c_void)
         }
@@ -333,22 +333,18 @@ pub fn dispatch(cb: &EngineCallbacks, cmd: &GameCommand) -> Result<(), String> {
         GameCommand::Unpause => {
             let mut data = SPauseCommand {
                 enable: false,
-                is_message: false,
+                reason: std::ptr::null(),
             };
             cb.handle_command(0, COMMAND_PAUSE, &mut data as *mut _ as *mut c_void)
         }
 
-        GameCommand::SetSpeed { speed } => {
-            let mut data = SSetGameSpeedCommand { speed: *speed };
-            cb.handle_command(
-                0,
-                COMMAND_SET_GAME_SPEED,
-                &mut data as *mut _ as *mut c_void,
-            )
+        GameCommand::SetSpeed { .. } => {
+            return Err("set_speed is not supported by the engine AI interface".into());
         }
     };
 
-    if result == 0 {
+    // Engine returns 0 for unit commands, 1 for engine-level commands (pause, etc.)
+    if result >= 0 {
         Ok(())
     } else {
         Err(format!(
