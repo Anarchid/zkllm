@@ -193,9 +193,9 @@ class IntegrationTest:
                     print(f"    | {line}")
             return
 
-        # Wait for Update events (game is ticking — may take a while after Init)
-        update_event = self.client.wait_for_sai_event("update", timeout=self.timeout)
-        self.check(update_event is not None, "Game is ticking (Update events)")
+        # Wait for unit events (game is ticking — units spawn shortly after Init)
+        unit_event = self.client.wait_for_sai_event("unit_created", timeout=self.timeout)
+        self.check(unit_event is not None, "Game is ticking (unit_created events)")
 
         # Verify channels/list shows SAI connected
         try:

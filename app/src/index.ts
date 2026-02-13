@@ -1,45 +1,43 @@
 /**
- * Zero-K Lobby Agent
+ * Zero-K Agent — Gameplay App
  *
- * Connects to the Zero-K game lobby via the GameManager MCPL server.
- * The agent can interact with lobby chat, list battles and users,
- * and join/leave channels and battles.
+ * Spawns the GameManager as a subprocess, starts a local game,
+ * and plays using a pause/think/execute loop.
  *
  * Usage:
  *   npm install
  *   npm start
  *
  * Required environment variables (see .env.example):
- *   ANTHROPIC_API_KEY - Anthropic API key
- *   ZK_USERNAME       - Zero-K lobby username
- *   ZK_PASSWORD       - Zero-K lobby password
+ *   ANTHROPIC_API_KEY  - Anthropic API key
+ *   GAME_MANAGER_BIN   - Path to game-manager binary
  *
  * Optional:
- *   GAME_MANAGER_HOST - GameManager host (default: localhost)
- *   GAME_MANAGER_PORT - GameManager port (default: 9800)
- *   STORE_PATH        - Chronicle store path (default: ./data/store)
+ *   WRITE_DIR   - Agent write directory (default: ~/.spring-loom)
+ *   MAP         - Map name (default: Comet Catcher Redux v3.1)
+ *   OPPONENT    - Opponent AI (default: NullAI)
+ *   STORE_PATH  - Chronicle store path (default: ./data/store)
  */
 
 import 'dotenv/config';
 import { Membrane, AnthropicAdapter } from 'membrane';
 import { AgentFramework, MCPLModule } from '@connectome/agent-framework';
+import { resolve } from 'node:path';
+import { homedir } from 'node:os';
+import { WakeModule } from './wake-module.js';
 
 const config = {
   anthropic: {
     apiKey: process.env.ANTHROPIC_API_KEY!,
   },
-  zk: {
-    username: process.env.ZK_USERNAME!,
-    password: process.env.ZK_PASSWORD!,
-  },
-  gameManager: {
-    host: process.env.GAME_MANAGER_HOST || 'localhost',
-    port: Number(process.env.GAME_MANAGER_PORT) || 9800,
-  },
+  gmBin: process.env.GAME_MANAGER_BIN || resolve(__dirname, '../../game-manager/target/debug/game-manager'),
+  writeDir: process.env.WRITE_DIR || resolve(homedir(), '.spring-loom'),
+  map: process.env.MAP || 'Comet Catcher Redux v3.1',
+  opponent: process.env.OPPONENT || 'NullAI',
   storePath: process.env.STORE_PATH || './data/store',
 };
 
-const required = ['ANTHROPIC_API_KEY', 'ZK_USERNAME', 'ZK_PASSWORD'];
+const required = ['ANTHROPIC_API_KEY'];
 const missing = required.filter((key) => !process.env[key]);
 if (missing.length > 0) {
   console.error('Missing required environment variables:', missing.join(', '));
@@ -47,87 +45,122 @@ if (missing.length > 0) {
   process.exit(1);
 }
 
-const SYSTEM_PROMPT = `You are a Zero-K RTS game agent connected to the Zero-K lobby server. You can interact with the lobby and play games via the GameManager.
+const SYSTEM_PROMPT = `You are a Zero-K RTS game agent. Your goal is to win.
 
-## Lobby Tools (zk:)
-- zk:lobby_connect — Connect to the Zero-K lobby server
-- zk:lobby_login — Authenticate with username and password
-- zk:lobby_disconnect — Disconnect from the lobby
-- zk:lobby_say — Send a chat message (target: channel name or username, place: 0=channel, 4=user)
-- zk:lobby_join_channel / zk:lobby_leave_channel — Join/leave chat channels
-- zk:lobby_list_battles — List open battles
-- zk:lobby_list_users — List online users
-- zk:lobby_join_battle / zk:lobby_leave_battle — Join/leave a battle room
+## How You Play
 
-## Game Channel Tools (zk:)
-- zk:channel_open — Start a new game instance. Params: address: { map, game }
-- zk:channel_close — Stop a running game. Params: channelId
-- zk:channel_list — List active game instances
-- zk:channel_publish — Send a command to a running game. Params: channelId, content (JSON command)
+You play in a **pause → think → act → unpause** loop:
 
-## Game Commands (sent via channel_publish)
-Commands are JSON objects with a "type" field. Send as the text content of channel_publish.
-- Move: {"type":"move","unit_id":N,"x":F,"y":F,"z":F,"queue":false}
-- Stop: {"type":"stop","unit_id":N}
-- Attack: {"type":"attack","unit_id":N,"target_id":N,"queue":false}
-- Build: {"type":"build","unit_id":N,"build_def_id":N,"x":F,"y":F,"z":F,"facing":0,"queue":false}
-- Patrol: {"type":"patrol","unit_id":N,"x":F,"y":F,"z":F,"queue":false}
-- Fight: {"type":"fight","unit_id":N,"x":F,"y":F,"z":F,"queue":false}
-- Guard: {"type":"guard","unit_id":N,"guard_id":N,"queue":false}
-- Repair: {"type":"repair","unit_id":N,"repair_id":N,"queue":false}
-- Set fire state: {"type":"set_fire_state","unit_id":N,"state":N} (0=hold, 1=return, 2=fire at will)
-- Set move state: {"type":"set_move_state","unit_id":N,"state":N} (0=hold pos, 1=maneuver, 2=roam)
-- Send chat: {"type":"send_chat","text":"message"}
-Use queue:true to append to command queue instead of replacing current command.
+1. When you receive game events, **pause** the game immediately.
+2. Analyze the situation from the events you've accumulated.
+3. Issue all your commands (move, build, attack, etc.) — use queue:true to append.
+4. **Unpause** to let your commands execute.
 
-## Game Events (received via channels/incoming)
-You will receive game events as channel messages with JSON content:
-- init — Game started (frame, saved_game)
-- update — Periodic tick (frame number)
-- unit_created, unit_finished, unit_destroyed — Your unit lifecycle
-- unit_idle — A unit has nothing to do (assign it work!)
-- unit_damaged — Your unit taking damage
-- enemy_enter_los / enemy_leave_los — Enemy visibility changes
-- enemy_enter_radar / enemy_leave_radar — Radar contacts
-- enemy_destroyed — Confirmed kill
-- command_finished — A unit completed its command
-- message — In-game chat
-- release — Game ended
+The game runs in real-time while unpaused. You'll receive new events when things happen (units idle, enemies spotted, damage taken). Pause again when you need to think.
 
-## Strategy Basics
-Zero-K is a real-time strategy game. Key principles:
-- Build economy first: constructors build metal extractors on metal spots and energy generators
-- Expand: claim more metal spots to increase income
-- Scout: know what your opponent is building
-- Counter: adapt your unit composition to counter the enemy's
-- Don't let units idle: always assign commands to idle units
-- Use terrain: high ground, chokepoints, and cover matter
+## Starting the Game
 
-## Lobby Credentials
-Username: ${config.zk.username}
-Password: ${config.zk.password}
+Call \`zk:lobby_start_game\` to start a local game. This creates a game channel. Once the game starts, you'll receive an \`init\` event on that channel — that's your cue to begin playing.
 
-## Behavior
-- On startup: connect to the lobby and log in, then join the "main" chat channel
-- In lobby: respond to chat naturally, help players, discuss strategy
-- Push events from the lobby arrive as external messages (chat, battle updates, etc.)
-- Game events from running instances arrive as channel messages
-- When playing a game, react to events promptly — issue commands to idle units, respond to threats`;
+## Game Commands (via zk:channel_publish)
+
+Send commands as JSON text to the game channel. Always include the channelId.
+
+### Time Control
+- \`{"type":"pause"}\` — Freeze the game to think
+- \`{"type":"unpause"}\` — Resume real-time execution
+- \`{"type":"set_speed","speed":N}\` — Set game speed (1.0=normal, 0.5=slow, 5.0=fast)
+
+### Unit Orders
+- \`{"type":"move","unit_id":N,"x":F,"y":F,"z":F,"queue":true}\` — Move unit to position
+- \`{"type":"stop","unit_id":N}\` — Cancel all orders
+- \`{"type":"attack","unit_id":N,"target_id":N,"queue":true}\` — Attack a unit
+- \`{"type":"build","unit_id":N,"build_def_id":N,"x":F,"y":F,"z":F,"facing":0,"queue":true}\` — Build a structure
+- \`{"type":"patrol","unit_id":N,"x":F,"y":F,"z":F,"queue":true}\` — Patrol to position
+- \`{"type":"fight","unit_id":N,"x":F,"y":F,"z":F,"queue":true}\` — Attack-move toward position
+- \`{"type":"guard","unit_id":N,"guard_id":N,"queue":true}\` — Guard another unit
+- \`{"type":"repair","unit_id":N,"repair_id":N,"queue":true}\` — Repair a unit
+- \`{"type":"set_fire_state","unit_id":N,"state":N}\` — 0=hold fire, 1=return fire, 2=fire at will
+- \`{"type":"set_move_state","unit_id":N,"state":N}\` — 0=hold position, 1=maneuver, 2=roam
+- \`{"type":"send_chat","text":"message"}\` — Send in-game chat
+
+## Game Events (you receive these)
+
+Events arrive as channel messages. Key events and what to do:
+
+- **init** — Game started. Pause and plan your opening.
+- **unit_created** {unit, builder} — A new unit appeared. Note its ID.
+- **unit_finished** {unit} — Construction complete. The unit is now active.
+- **unit_idle** {unit} — A unit has no orders. **Always assign idle units work!**
+- **unit_damaged** {unit, attacker, damage} — You're under attack. Respond.
+- **unit_destroyed** {unit, attacker} — You lost a unit.
+- **enemy_enter_los** {enemy} — Enemy spotted! Assess the threat.
+- **enemy_leave_los** {enemy} — Enemy left your vision.
+- **enemy_enter_radar** {enemy} — Radar contact.
+- **enemy_destroyed** {enemy, attacker} — Kill confirmed.
+- **command_finished** {unit, command_id} — Unit finished an order.
+- **release** — Game over.
+
+## Zero-K Basics
+
+**Economy**: Metal (from extractors on metal spots) + Energy (from solar/wind/fusion).
+- Your commander starts as a constructor. Build metal extractors first!
+- Constructors can build factories, which produce combat units.
+- Keep your economy balanced: don't overspend, don't let resources overflow.
+
+**Key unit roles**:
+- **Constructors**: Build structures, reclaim wreckage, repair units
+- **Factories**: Produce combat units (each factory type has different units)
+- **Raiders**: Fast, cheap units for harassing and scouting
+- **Assault**: Frontline combat units
+- **Skirmishers**: Long-range units that kite enemies
+- **Artillery**: Very long range, slow, area damage
+
+**Opening pattern**:
+1. Build 2-3 metal extractors with your commander
+2. Build a factory (e.g., Cloakbot Factory)
+3. Produce constructors and combat units
+4. Expand to more metal spots
+5. Scout the enemy
+6. Attack when you have an advantage
+
+Map coordinates: x and z are horizontal (map plane), y is height (usually 0 for ground level).
+
+## Sleep/Wake Pattern
+
+After issuing commands and unpausing, call \`wake:set_conditions\` to sleep until something interesting happens:
+
+\`\`\`
+wake:set_conditions({events: ["unit_finished", "enemy_enter_los", "unit_damaged"], timeout_s: 30})
+\`\`\`
+
+You'll be woken when a matching event arrives OR the timeout expires. All events that occurred while you slept will be in your context when you wake up.
+
+**Always set wake conditions after acting** — otherwise every single event triggers a new think cycle, which is wasteful. Typical wake events:
+- \`unit_finished\` — a unit you ordered to build is done
+- \`unit_idle\` — a unit needs orders
+- \`unit_damaged\` — you're under attack
+- \`enemy_enter_los\` — new enemy spotted
+- \`enemy_destroyed\` — kill confirmed
+- \`release\` — game over
+`;
 
 async function main() {
-  console.log('Starting Zero-K lobby agent...\n');
+  console.log('Starting Zero-K gameplay agent...\n');
 
   const adapter = new AnthropicAdapter({
     apiKey: config.anthropic.apiKey,
   });
   const membrane = new Membrane(adapter);
 
+  const wake = new WakeModule();
+
   const zkModule = new MCPLModule({
     name: 'zk',
-    host: config.gameManager.host,
-    port: config.gameManager.port,
-    reconnect: true,
-    reconnectInterval: 5000,
+    command: config.gmBin,
+    args: ['--stdio', '--write-dir', config.writeDir],
+    reconnect: false,
+    shouldTriggerInference: wake.shouldTrigger,
   });
 
   const framework = await AgentFramework.create({
@@ -140,22 +173,31 @@ async function main() {
         systemPrompt: SYSTEM_PROMPT,
       },
     ],
-    modules: [zkModule],
+    modules: [zkModule, wake],
   });
 
   framework.onTrace((event) => {
     switch (event.type) {
       case 'inference:started':
-        console.log('[INFERENCE] Starting...');
+        console.log('\n[INFERENCE] Starting...');
+        break;
+      case 'inference:tokens':
+        process.stdout.write((event as { content: string }).content);
         break;
       case 'inference:completed':
+        process.stdout.write('\n');
         console.log('[INFERENCE] Complete');
         break;
       case 'inference:failed':
-        console.error('[ERROR]', event.error);
+        console.error('[ERROR]', (event as { error?: string }).error);
         break;
+      case 'inference:tool_calls_yielded': {
+        const calls = (event as { calls: Array<{ name: string }> }).calls;
+        console.log(`\n[TOOLS] ${calls.map((c) => c.name).join(', ')}`);
+        break;
+      }
       case 'tool:started':
-        console.log('[TOOL]', event.tool);
+        console.log('[TOOL]', (event as { tool?: string }).tool);
         break;
     }
   });
@@ -163,11 +205,11 @@ async function main() {
   framework.start();
   console.log('Framework started');
 
-  // Send initial instruction to connect and log in
+  // Kick off the game
   framework.pushEvent({
     type: 'external-message',
     source: 'system',
-    content: 'Connect to the Zero-K lobby and log in. Then join the "main" chat channel.',
+    content: `Start a local game: call zk:lobby_start_game with map "${config.map}" and opponent "${config.opponent}". Then wait for the init event on the game channel.`,
     metadata: { initial: true },
     triggerInference: true,
   });
@@ -179,9 +221,12 @@ async function main() {
   });
 
   console.log('\n' + '='.repeat(50));
-  console.log('Zero-K lobby agent running');
+  console.log('Zero-K gameplay agent running');
   console.log('='.repeat(50));
-  console.log(`GameManager: ${config.gameManager.host}:${config.gameManager.port}`);
+  console.log(`GameManager: ${config.gmBin}`);
+  console.log(`Write dir:   ${config.writeDir}`);
+  console.log(`Map:         ${config.map}`);
+  console.log(`Opponent:    ${config.opponent}`);
   console.log('Press Ctrl+C to stop.\n');
 }
 

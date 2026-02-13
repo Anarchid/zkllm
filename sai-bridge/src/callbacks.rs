@@ -186,8 +186,10 @@ impl EngineCallbacks {
 
 pub const COMMAND_TO_ID_ENGINE: c_int = -1;
 
-// Command topics (Phase 0 subset)
+// Engine-level command topics
+pub const COMMAND_PAUSE: c_int = 5;
 pub const COMMAND_SEND_TEXT_MESSAGE: c_int = 6;
+pub const COMMAND_SET_GAME_SPEED: c_int = 7;
 pub const COMMAND_UNIT_BUILD: c_int = 35;
 pub const COMMAND_UNIT_STOP: c_int = 36;
 pub const COMMAND_UNIT_MOVE: c_int = 42;
@@ -302,4 +304,15 @@ pub struct SSetMoveStateUnitCommand {
     pub options: c_short,
     pub time_out: c_int,
     pub move_state: c_int,
+}
+
+#[repr(C)]
+pub struct SPauseCommand {
+    pub enable: bool,
+    pub is_message: bool,
+}
+
+#[repr(C)]
+pub struct SSetGameSpeedCommand {
+    pub speed: c_float,
 }

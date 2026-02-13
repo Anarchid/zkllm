@@ -1,7 +1,7 @@
 {
   "name": "zk-agent",
   "version": "0.1.0",
-  "description": "Zero-K lobby agent using Afcomech agent framework + MCPL",
+  "description": "Zero-K gameplay agent using Afcomech agent framework + MCPL",
   "type": "module",
   "scripts": {
     "start": "tsx src/index.ts",

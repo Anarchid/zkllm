@@ -87,6 +87,15 @@ pub enum GameCommand {
 
     #[serde(rename = "send_chat")]
     SendChat { text: String },
+
+    #[serde(rename = "pause")]
+    Pause,
+
+    #[serde(rename = "unpause")]
+    Unpause,
+
+    #[serde(rename = "set_speed")]
+    SetSpeed { speed: f32 },
 }
 
 /// Dispatch a GameCommand to the engine via callbacks.
@@ -263,6 +272,31 @@ pub fn dispatch(cb: &EngineCallbacks, cmd: &GameCommand) -> Result<(), String> {
             cb.handle_command(
                 0,
                 COMMAND_SEND_TEXT_MESSAGE,
+                &mut data as *mut _ as *mut c_void,
+            )
+        }
+
+        GameCommand::Pause => {
+            let mut data = SPauseCommand {
+                enable: true,
+                is_message: false,
+            };
+            cb.handle_command(0, COMMAND_PAUSE, &mut data as *mut _ as *mut c_void)
+        }
+
+        GameCommand::Unpause => {
+            let mut data = SPauseCommand {
+                enable: false,
+                is_message: false,
+            };
+            cb.handle_command(0, COMMAND_PAUSE, &mut data as *mut _ as *mut c_void)
+        }
+
+        GameCommand::SetSpeed { speed } => {
+            let mut data = SSetGameSpeedCommand { speed: *speed };
+            cb.handle_command(
+                0,
+                COMMAND_SET_GAME_SPEED,
                 &mut data as *mut _ as *mut c_void,
             )
         }

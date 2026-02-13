@@ -1674,8 +1674,11 @@ async fn main() -> anyhow::Result<()> {
                         }
                     }
 
-                    // Forward events
+                    // Forward events (skip Update ticks — noise for the LLM)
                     for event in &events {
+                        if matches!(event, sai_ipc::SaiEvent::Update { .. }) {
+                            continue;
+                        }
                         gm.forward_sai_event(&channel_id, event).await;
                     }
                 }
