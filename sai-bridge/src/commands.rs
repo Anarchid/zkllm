@@ -33,7 +33,10 @@ pub enum GameCommand {
     #[serde(rename = "build")]
     Build {
         unit_id: i32,
+        #[serde(default)]
         build_def_id: i32,
+        #[serde(default)]
+        build_def_name: Option<String>,
         x: f32,
         y: f32,
         z: f32,
@@ -148,19 +151,27 @@ pub fn dispatch(cb: &EngineCallbacks, cmd: &GameCommand) -> Result<(), String> {
         GameCommand::Build {
             unit_id,
             build_def_id,
+            build_def_name,
             x,
             y,
             z,
             facing,
             queue,
         } => {
+            // Resolve def name to ID if provided, otherwise use numeric ID
+            let def_id = if let Some(name) = build_def_name {
+                cb.get_unit_def_by_name(name)
+                    .ok_or_else(|| format!("Unknown unit def name: {}", name))?
+            } else {
+                *build_def_id
+            };
             let mut pos: [c_float; 3] = [*x, *y, *z];
             let mut data = SBuildUnitCommand {
                 unit_id: *unit_id as c_int,
                 group_id: -1,
                 options: if *queue { UNIT_COMMAND_OPTION_SHIFT_KEY } else { 0 },
                 time_out: i32::MAX,
-                to_build_unit_def_id: *build_def_id as c_int,
+                to_build_unit_def_id: def_id as c_int,
                 build_pos: &mut pos as *mut [c_float; 3],
                 facing: *facing as c_int,
             };

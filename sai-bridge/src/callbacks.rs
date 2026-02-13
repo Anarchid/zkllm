@@ -34,6 +34,8 @@ const IDX_ECONOMY_GET_CURRENT: usize = 74;
 const IDX_ECONOMY_GET_INCOME: usize = 75;
 const IDX_ECONOMY_GET_USAGE: usize = 76;
 const IDX_ECONOMY_GET_STORAGE: usize = 77;
+const IDX_GET_UNIT_DEFS: usize = 87;
+const IDX_GET_UNIT_DEF_BY_NAME: usize = 88;
 const IDX_UNIT_DEF_GET_NAME: usize = 91;
 const IDX_UNIT_DEF_GET_HUMAN_NAME: usize = 92;
 const IDX_UNIT_GET_DEF: usize = 293;
@@ -110,6 +112,17 @@ impl EngineCallbacks {
     }
 
     // ── Unit queries ──
+
+    /// Resolve a unit definition name (e.g. "cloakraid") to its numeric ID.
+    /// Returns the def ID, or a negative value if not found.
+    pub fn get_unit_def_by_name(&self, name: &str) -> Option<i32> {
+        let c_name = CString::new(name).ok()?;
+        type Fn = unsafe extern "C" fn(c_int, *const c_char) -> c_int;
+        let id = unsafe {
+            self.fn_at::<Fn>(IDX_GET_UNIT_DEF_BY_NAME)(self.ai_id, c_name.as_ptr())
+        };
+        if id < 0 { None } else { Some(id) }
+    }
 
     /// Get the unit definition ID for a given unit instance.
     pub fn unit_get_def(&self, unit_id: i32) -> i32 {

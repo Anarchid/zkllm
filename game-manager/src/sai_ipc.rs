@@ -185,7 +185,10 @@ pub enum SaiCommand {
     #[serde(rename = "build")]
     Build {
         unit_id: i32,
+        #[serde(default)]
         build_def_id: i32,
+        #[serde(default)]
+        build_def_name: Option<String>,
         x: f32,
         y: f32,
         z: f32,

@@ -83,7 +83,7 @@ Send commands as JSON text to the game channel. Always include the channelId.
 - \`{"type":"move","unit_id":N,"x":F,"y":F,"z":F,"queue":true}\` — Move unit to position
 - \`{"type":"stop","unit_id":N}\` — Cancel all orders
 - \`{"type":"attack","unit_id":N,"target_id":N,"queue":true}\` — Attack a unit
-- \`{"type":"build","unit_id":N,"build_def_id":N,"x":F,"y":F,"z":F,"facing":0,"queue":true}\` — Build a structure
+- \`{"type":"build","unit_id":N,"build_def_name":"defname","x":F,"y":F,"z":F,"facing":0,"queue":true}\` — Build a unit/structure by def name
 - \`{"type":"patrol","unit_id":N,"x":F,"y":F,"z":F,"queue":true}\` — Patrol to position
 - \`{"type":"fight","unit_id":N,"x":F,"y":F,"z":F,"queue":true}\` — Attack-move toward position
 - \`{"type":"guard","unit_id":N,"guard_id":N,"queue":true}\` — Guard another unit
