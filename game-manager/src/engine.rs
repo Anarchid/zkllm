@@ -38,6 +38,10 @@ pub struct GameConfig {
     pub opponent_team: i32,
     // Multiplayer client config
     pub multiplayer: Option<MultiplayerConfig>,
+    // Player mode: agent occupies a PLAYER slot, widget calls /aicontrol
+    pub player_mode: bool,
+    // Agent player name (must match agent_bootstrap.json whitelist)
+    pub agent_name: String,
 }
 
 #[derive(Debug, Clone)]
@@ -116,10 +120,32 @@ impl EngineInstance {
         }
     }
 
+    /// Write connection.json into the SAI bridge's data directory.
+    /// The SAI bridge reads this as a fallback when AI options aren't available
+    /// (e.g. player mode where /aicontrol creates the AI dynamically).
+    async fn write_connection_config(&self) -> Result<(), String> {
+        let config_path = self
+            .config
+            .write_dir
+            .join("AI/Skirmish/AgentBridge/0.1/connection.json");
+        let config = serde_json::json!({
+            "socket_path": self.config.socket_path,
+        });
+        tokio::fs::write(&config_path, serde_json::to_string_pretty(&config).unwrap())
+            .await
+            .map_err(|e| format!("Failed to write connection.json: {}", e))?;
+        Ok(())
+    }
+
     /// Launch the engine process.
     pub async fn start(&mut self) -> Result<(), String> {
+        // Write connection config before engine launch (harmless in AI mode, required in player mode)
+        self.write_connection_config().await?;
+
         let script = if self.config.multiplayer.is_some() {
             self.generate_multiplayer_script()
+        } else if self.config.player_mode {
+            self.generate_player_script()
         } else {
             self.generate_local_script()
         };
@@ -255,6 +281,59 @@ impl EngineInstance {
         )
     }
 
+    /// Generate a local player-mode script: agent is a PLAYER, opponent is an AI.
+    /// The bootstrap widget calls /aicontrol at GameStart to hand control to AgentBridge.
+    /// No socket_path in the script — SAI reads it from connection.json.
+    fn generate_player_script(&self) -> String {
+        let opponent = self
+            .config
+            .opponent_ai
+            .as_deref()
+            .unwrap_or("CircuitAINovice");
+
+        format!(
+            r#"[GAME]
+{{
+    Mapname={map};
+    Gametype={game};
+    IsHost=1;
+    MyPlayerNum=0;
+    MyPlayerName={agent_name};
+    StartPosType=2;
+    NumPlayers=1;
+    NumUsers=2;
+    NumTeams=2;
+    NumAllyTeams=2;
+
+    [PLAYER0]
+    {{
+        Name={agent_name};
+        Team={agent_team};
+        Spectator=0;
+    }}
+
+    [AI0]
+    {{
+        Name={opponent};
+        ShortName={opponent};
+        Team={opponent_team};
+        Host=0;
+    }}
+
+    [TEAM0] {{ TeamLeader=0; AllyTeam=0; }}
+    [TEAM1] {{ TeamLeader=0; AllyTeam=1; }}
+    [ALLYTEAM0] {{ NumAllies=0; }}
+    [ALLYTEAM1] {{ NumAllies=0; }}
+}}"#,
+            map = self.config.map,
+            game = self.config.game,
+            agent_name = self.config.agent_name,
+            agent_team = self.config.agent_team,
+            opponent = opponent,
+            opponent_team = self.config.opponent_team,
+        )
+    }
+
     /// Generate a multiplayer client script — connects to a remote game server.
     fn generate_multiplayer_script(&self) -> String {
         let mp = self.config.multiplayer.as_ref().unwrap();
@@ -302,6 +381,8 @@ impl EngineManager {
         game: &str,
         opponent: Option<&str>,
         headless: bool,
+        player_mode: bool,
+        agent_name: &str,
     ) -> Result<String, String> {
         let id = self.next_id;
         self.next_id += 1;
@@ -322,6 +403,8 @@ impl EngineManager {
             ),
             opponent_team: 1,
             multiplayer: None,
+            player_mode,
+            agent_name: agent_name.to_string(),
         };
 
         let mut instance = EngineInstance::new(channel_id.clone(), config);
@@ -358,6 +441,8 @@ impl EngineManager {
                 player_name: player_name.to_string(),
                 script_password: data.script_password.clone(),
             }),
+            player_mode: true, // multiplayer is always player mode
+            agent_name: player_name.to_string(),
         };
 
         let mut instance = EngineInstance::new(channel_id.clone(), config);

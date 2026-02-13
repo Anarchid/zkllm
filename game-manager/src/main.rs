@@ -99,8 +99,13 @@ impl GameManager {
             .and_then(|a| a.get("headless"))
             .and_then(|v| v.as_bool())
             .unwrap_or(true);
+        let player_mode = params
+            .get("address")
+            .and_then(|a| a.get("player_mode"))
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
 
-        match self.engines.start_local_game(map, game, opponent, headless).await {
+        match self.engines.start_local_game(map, game, opponent, headless, player_mode, &self.agent_name).await {
             Ok(channel_id) => {
                 // Set up SAI IPC listener for this channel
                 let socket_path = self
@@ -1101,10 +1106,14 @@ impl GameManager {
             .get("headless")
             .and_then(|v| v.as_bool())
             .unwrap_or(true);
+        let player_mode = args
+            .get("player_mode")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
 
         match self
             .engines
-            .start_local_game(&map, game, Some(opponent), headless)
+            .start_local_game(&map, game, Some(opponent), headless, player_mode, &self.agent_name)
             .await
         {
             Ok(channel_id) => {
@@ -1166,6 +1175,14 @@ impl GameManager {
             .my_username
             .clone()
             .unwrap_or_else(|| self.agent_name.clone());
+
+        // Ensure the lobby username is whitelisted for /aicontrol
+        if let Err(e) = crate::write_dir::ensure_player_whitelisted(
+            &self.write_dir,
+            &player_name,
+        ) {
+            tracing::warn!("Failed to whitelist player '{}': {}", player_name, e);
+        }
 
         match self
             .engines

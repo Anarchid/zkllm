@@ -166,6 +166,31 @@ pub fn init_write_dir(
     Ok(())
 }
 
+/// Ensure a player name is whitelisted in agent_bootstrap.json.
+/// For multiplayer, the lobby username may differ from the default agent_name
+/// that was written at write-dir init time.
+pub fn ensure_player_whitelisted(write_dir: &Path, player_name: &str) -> anyhow::Result<()> {
+    let config_path = write_dir.join("LuaUI/Config/agent_bootstrap.json");
+    let mut config: serde_json::Value = if config_path.exists() {
+        let contents = std::fs::read_to_string(&config_path)?;
+        serde_json::from_str(&contents)?
+    } else {
+        serde_json::json!({"players": {}})
+    };
+
+    if let Some(players) = config.get_mut("players").and_then(|p| p.as_object_mut()) {
+        if !players.contains_key(player_name) {
+            players.insert(
+                player_name.to_string(),
+                serde_json::json!({"ai": "AgentBridge", "version": "0.1"}),
+            );
+            std::fs::write(&config_path, serde_json::to_string_pretty(&config)?)?;
+            tracing::info!("Added '{}' to agent_bootstrap.json", player_name);
+        }
+    }
+    Ok(())
+}
+
 /// Check if dest file needs updating (missing or older than src).
 fn should_update(dest: &Path, src: &Path) -> anyhow::Result<bool> {
     if !dest.exists() {

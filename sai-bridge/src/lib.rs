@@ -31,10 +31,34 @@ static INSTANCES: Mutex<Vec<Option<AiInstance>>> = Mutex::new(Vec::new());
 const UPDATE_INTERVAL: u32 = 30;
 
 fn get_socket_path(cb: &EngineCallbacks) -> String {
-    // Check AI option first, then env var, then default
-    cb.get_option_value("socket_path")
-        .or_else(|| std::env::var("SAI_SOCKET_PATH").ok())
-        .unwrap_or_else(|| "/tmp/game-manager.sock".to_string())
+    // 1. AI option (startscript [Options] — AI-slot mode)
+    if let Some(path) = cb.get_option_value("socket_path") {
+        cb.log("[SAI Bridge] Socket path from AI option");
+        return path;
+    }
+
+    // 2. connection.json in AI data dir (player mode via /aicontrol)
+    if let Some(data_dir) = cb.get_info_value("dataDir") {
+        let config_path = format!("{}/connection.json", data_dir.trim_end_matches('/'));
+        if let Ok(contents) = std::fs::read_to_string(&config_path) {
+            if let Ok(config) = serde_json::from_str::<serde_json::Value>(&contents) {
+                if let Some(path) = config.get("socket_path").and_then(|v| v.as_str()) {
+                    cb.log(&format!("[SAI Bridge] Socket path from {}", config_path));
+                    return path.to_string();
+                }
+            }
+        }
+    }
+
+    // 3. Environment variable
+    if let Ok(path) = std::env::var("SAI_SOCKET_PATH") {
+        cb.log("[SAI Bridge] Socket path from SAI_SOCKET_PATH env");
+        return path;
+    }
+
+    // 4. Default
+    cb.log("[SAI Bridge] Using default socket path");
+    "/tmp/game-manager.sock".to_string()
 }
 
 /// Called by the engine when this AI is instantiated.

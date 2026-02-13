@@ -57,6 +57,7 @@ class IntegrationTest:
         self.verbose = args.verbose
         self.timeout = args.timeout
         self.fresh = args.fresh
+        self.player_mode = args.player_mode
         if self.fresh:
             self.write_dir = Path(tempfile.mkdtemp(prefix="gm-integration-"))
         else:
@@ -87,7 +88,8 @@ class IntegrationTest:
         self.log("WARN", msg)
 
     def run(self):
-        print(f"\n=== Integration Test (Tier {self.tier}) ===")
+        mode = "player" if self.player_mode else "AI"
+        print(f"\n=== Integration Test (Tier {self.tier}, {mode} mode) ===")
         print(f"  Write-dir: {self.write_dir}")
         print(f"  Map: {self.map_name}, Game: {self.game_name}, Opponent: {self.opponent}")
         print()
@@ -134,12 +136,15 @@ class IntegrationTest:
     def _tier1_engine_launch(self):
         print("\n--- Tier 1: Engine Launch ---")
 
-        result = self.client.call_tool("lobby_start_game", {
+        tool_args = {
             "map": self.map_name,
             "game": self.game_name,
             "opponent": self.opponent,
             "headless": True,
-        })
+        }
+        if self.player_mode:
+            tool_args["player_mode"] = True
+        result = self.client.call_tool("lobby_start_game", tool_args)
 
         # Check for error
         is_error = result.get("isError", False)
@@ -291,6 +296,8 @@ def main():
                         help="Timeout in seconds for engine operations")
     parser.add_argument("--fresh", action="store_true",
                         help="Use a fresh tempdir (slow: full archive rescan). Default: persistent ~/.spring-test-agent")
+    parser.add_argument("--player-mode", action="store_true",
+                        help="Use player mode (agent as PLAYER slot, widget fires /aicontrol)")
     parser.add_argument("--verbose", "-v", action="store_true",
                         help="Verbose output (show JSON-RPC traffic)")
     args = parser.parse_args()

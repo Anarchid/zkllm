@@ -161,7 +161,8 @@ pub fn lobby_tools() -> serde_json::Value {
                         "map": { "type": "string", "description": "Map name (e.g., 'Comet Catcher Redux')" },
                         "game": { "type": "string", "default": "Zero-K $VERSION", "description": "Game type / archive name" },
                         "opponent": { "type": "string", "default": "CircuitAINovice", "description": "Opponent AI shortname" },
-                        "headless": { "type": "boolean", "default": true, "description": "Run without UI (true) or with UI (false)" }
+                        "headless": { "type": "boolean", "default": true, "description": "Run without UI (true) or with UI (false)" },
+                        "player_mode": { "type": "boolean", "default": false, "description": "Agent as PLAYER slot (widget hands control via /aicontrol)" }
                     },
                     "required": ["map"]
                 }
@@ -200,6 +201,7 @@ pub fn server_capabilities() -> McplCapabilities {
         inference_request: None,
         stream_observer: None,
         scoped_access: None,
+        model_info: None,
     }
 }
 

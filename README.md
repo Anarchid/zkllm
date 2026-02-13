@@ -41,7 +41,7 @@ Rust cdylib (shared library) loaded by the Recoil engine as a Skirmish AI:
 
 ### Agent App (`app/`)
 
-TypeScript application using the Agent Framework for multi-agent orchestration. Not yet wired for live play — the current milestone is the infrastructure layer.
+TypeScript application using the Connectome's [Agent Framework](https://github.com/antra-tess/agent-framework) for multi-agent orchestration. Not yet wired for live play — the current milestone is the infrastructure layer.
 
 ## Tools
 
