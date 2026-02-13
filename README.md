@@ -41,7 +41,7 @@ Rust cdylib (shared library) loaded by the Recoil engine as a Skirmish AI:
 
 ### Agent App (`app/`)
 
-TypeScript application using the Connectome's [Agent Framework](https://github.com/antra-tess/agent-framework) for multi-agent orchestration. Not yet wired for live play — the current milestone is the infrastructure layer.
+TypeScript application using the Connectome's [Agent Framework](https://github.com/antra-tess/agent-framework) for multi-agent orchestration. Spawns the GameManager as a subprocess, starts a local game, and plays using a pause/think/wake loop with agent-controlled event filtering.
 
 ## Tools
 
@@ -88,6 +88,9 @@ Commands are sent via `channels/publish` as JSON:
 {"type": "guard", "unit_id": 42, "guard_id": 43}
 {"type": "repair", "unit_id": 42, "repair_id": 43}
 {"type": "send_chat", "text": "glhf"}
+{"type": "pause"}
+{"type": "unpause"}
+{"type": "set_speed", "speed": 5.0}
 ```
 
 All movement commands support `"queue": true` for shift-queuing.
@@ -132,6 +135,32 @@ Then ask Claude to start a game:
 
 Claude will call `lobby_start_game`, receive game events through the channel, and can issue commands back. Against a NullAI (which does nothing), winning is a matter of walking across the map and destroying the idle enemy commander.
 
+### Run the Agent App
+
+The standalone app spawns the GameManager, starts a game, and plays autonomously:
+
+```bash
+cd app
+cp .env.example .env
+# Edit .env — set ANTHROPIC_API_KEY at minimum
+
+npm install
+npm start
+```
+
+The agent uses a **pause → think → act → unpause → sleep** loop. After acting, it calls `wake:set_conditions` to specify which events should wake it for the next think cycle (e.g. unit finished, enemy spotted, timeout). Agent inference streams to the console in real-time.
+
+Environment variables (all optional except API key):
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `ANTHROPIC_API_KEY` | (required) | Anthropic API key |
+| `GAME_MANAGER_BIN` | `../game-manager/target/debug/game-manager` | Path to GM binary |
+| `WRITE_DIR` | `~/.spring-loom` | Engine write directory |
+| `MAP` | `Comet Catcher Redux v3.1` | Map to play on |
+| `OPPONENT` | `NullAI` | Opponent AI |
+| `STORE_PATH` | `./data/store` | Chronicle event store |
+
 ### Integration Tests
 
 ```bash
@@ -152,7 +181,7 @@ python3 tests/integration_test.py --tier 3 --fresh
 
 Test tiers:
 1. **Engine Launch** — game starts, infolog.txt created
-2. **SAI Boot** — Init event received, Update events flowing, SAI connected
+2. **SAI Boot** — Init event received, unit events flowing, SAI connected
 3. **Command Round-Trip** — chat command delivered, unit events observed
 
 ## Architecture
