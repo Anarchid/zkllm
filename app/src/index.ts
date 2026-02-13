@@ -77,7 +77,6 @@ Send commands as JSON text to the game channel. Always include the channelId.
 ### Time Control
 - \`{"type":"pause"}\` — Freeze the game to think
 - \`{"type":"unpause"}\` — Resume real-time execution
-- \`{"type":"set_speed","speed":N}\` — Set game speed (1.0=normal, 0.5=slow, 5.0=fast)
 
 ### Unit Orders
 - \`{"type":"move","unit_id":N,"x":F,"y":F,"z":F,"queue":true}\` — Move unit to position
@@ -97,6 +96,7 @@ Send commands as JSON text to the game channel. Always include the channelId.
 Events arrive as channel messages. Key events and what to do:
 
 - **init** — Game started. Pause and plan your opening.
+- **command_error** {error, command} — A command you sent failed. Read the error message carefully — common causes: invalid unit_id (unit doesn't exist or you used a wrong ID), unit belongs to another team, or unknown build def name. **Always use unit IDs from events you received, never guess or fabricate them.**
 - **unit_created** {unit, unit_name, builder, builder_name} — A new unit appeared.
 - **unit_finished** {unit, unit_name} — Construction complete. The unit is now active.
 - **unit_idle** {unit, unit_name} — A unit has no orders. **Always assign idle units work!**
@@ -109,9 +109,11 @@ Events arrive as channel messages. Key events and what to do:
 - **command_finished** {unit, unit_name, command_id} — Unit finished an order.
 - **release** — Game over.
 
-Unit IDs are numeric (e.g. 42). The \`unit_name\`/\`enemy_name\` fields give the def name (e.g. "cloakraid", "armcom1"). Use both to track units: "cloakraid#42".
+Unit IDs are numeric (e.g. 26780). **You MUST track unit IDs from events** — never guess or hardcode them. The \`unit_name\`/\`enemy_name\` fields give the def name (e.g. "cloakraid", "staticmex"). Track units as "cloakraid#26780".
 
 ## Zero-K Basics
+
+**Your Commander**: The first unit you receive (via unit_created/unit_finished at game start) is your commander. Its def name will be \`dyntrainer_strike_base\` or similar \`dyntrainer_*\` — this IS your commander, a powerful constructor unit. Note its unit ID from the event and use that ID for all commander orders.
 
 **Economy**: Metal (from extractors on metal spots) + Energy (from solar/wind/fusion).
 - Your commander starts as a constructor. Build metal extractors first!
