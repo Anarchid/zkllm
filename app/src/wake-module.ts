@@ -3,9 +3,11 @@
  *
  * Lets the agent specify which SAI events should wake it up.
  * Events that don't match are still delivered to context but
- * don't trigger inference. One-shot: conditions clear on match
- * or timeout, entering suppressed state (no triggers) until
- * the agent explicitly calls set_conditions again.
+ * don't trigger inference.
+ *
+ * Conditions persist until the agent calls set_conditions again.
+ * The agent should call set_conditions at the end of every
+ * think cycle to set what should wake it next.
  */
 
 import type {
@@ -29,32 +31,33 @@ export class WakeModule implements Module {
   private ctx: ModuleContext | null = null;
   private conditions: WakeConditions | null = null;
   private timer: ReturnType<typeof setTimeout> | null = null;
-  /** After conditions fire, suppress all triggers until agent sets new conditions. */
-  private suppressed = false;
+  private lastTriggerTime = 0;
+  private static DEBOUNCE_MS = 500;
 
   /**
    * Callback for MCPLModule's shouldTriggerInference.
    * Arrow function to preserve `this` binding.
    */
   shouldTrigger = (content: string, _metadata: Record<string, unknown>): boolean => {
-    // After conditions fire, stay quiet until agent explicitly sets new conditions
-    if (this.suppressed) return false;
     // No conditions set (initial state) — trigger on everything
     if (!this.conditions) return true;
 
+    // Debounce: collapse same-frame events into one inference
+    const now = Date.now();
+    if (now - this.lastTriggerTime < WakeModule.DEBOUNCE_MS) return false;
+
     // Try to extract SAI event type from the message content.
-    // Content format: "[channel:game:local-1] Game Engine: {\"type\":\"unit_idle\",...}"
     try {
       const jsonMatch = content.match(/\{[^]*\}/);
       if (jsonMatch) {
         const parsed = JSON.parse(jsonMatch[0]);
         if (parsed.type && this.conditions.events.includes(parsed.type)) {
-          this.consumeConditions();
+          this.lastTriggerTime = now;
           return true;
         }
       }
     } catch {
-      // Not JSON — let it through if no conditions are set
+      // Not JSON — don't trigger
     }
 
     return false;
@@ -65,7 +68,7 @@ export class WakeModule implements Module {
   }
 
   async stop(): Promise<void> {
-    this.clearConditions();
+    this.clearTimer();
     this.ctx = null;
   }
 
@@ -76,7 +79,7 @@ export class WakeModule implements Module {
         description:
           'Set wake conditions. You will sleep until a matching event arrives or the timeout ' +
           'expires. All events are still recorded — you will see them when you wake up. ' +
-          'Conditions are one-shot: they clear when triggered.',
+          'Conditions persist until you call set_conditions again.',
         inputSchema: {
           type: 'object' as const,
           properties: {
@@ -106,22 +109,22 @@ export class WakeModule implements Module {
 
     const timeout_s = input.timeout_s ?? 30;
 
-    // Clear any previous conditions and lift suppression
-    this.clearConditions();
-    this.suppressed = false;
+    // Clear previous timer
+    this.clearTimer();
 
     // Set new conditions
     this.conditions = { events: input.events, timeout_s };
 
     // Start timeout
     this.timer = setTimeout(() => {
-      this.consumeConditions();
+      this.timer = null;
       this.ctx?.pushEvent({
         type: 'inference-request',
         agentName: 'commander',
         reason: 'wake-timeout',
         source: 'wake',
-      });
+        triggerInference: true,
+      } as any);
     }, timeout_s * 1000);
 
     return {
@@ -131,7 +134,7 @@ export class WakeModule implements Module {
   }
 
   async onProcess(event: ProcessEvent, _state: ProcessState): Promise<EventResponse> {
-    // Handle system bootstrap messages (no other module claims these)
+    // Handle system bootstrap messages
     if (event.type === 'external-message' && event.source === 'system') {
       return {
         addMessages: [{
@@ -144,19 +147,7 @@ export class WakeModule implements Module {
     return {};
   }
 
-  /** Consume conditions on match/timeout — enter suppressed state. */
-  private consumeConditions(): void {
-    this.conditions = null;
-    this.suppressed = true;
-    if (this.timer) {
-      clearTimeout(this.timer);
-      this.timer = null;
-    }
-  }
-
-  /** Clear conditions without suppressing (used during stop/cleanup). */
-  private clearConditions(): void {
-    this.conditions = null;
+  private clearTimer(): void {
     if (this.timer) {
       clearTimeout(this.timer);
       this.timer = null;

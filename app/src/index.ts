@@ -52,14 +52,13 @@ const SYSTEM_PROMPT = `You are a Zero-K RTS game agent. Your goal is to win.
 
 ## How You Play
 
-You play in a **pause → think → act → unpause** loop:
+The game runs in **real-time**. You play in a **think → act → sleep** loop:
 
-1. When you receive game events, **pause** the game immediately.
-2. Analyze the situation from the events you've accumulated.
-3. Issue all your commands (move, build, attack, etc.) — use queue:true to append.
-4. **Unpause** to let your commands execute.
+1. When you're woken by game events, analyze the situation.
+2. Issue all your commands (move, build, attack, etc.) — use queue:true to append.
+3. Set wake conditions, then sleep until the next interesting event.
 
-The game runs in real-time while unpaused. You'll receive new events when things happen (units idle, enemies spotted, damage taken). Pause again when you need to think.
+The world keeps moving while you think and while you sleep. Be decisive — issue commands quickly, then sleep. You'll accumulate events while asleep and process them all on your next wake.
 
 ## Safety Rules
 
@@ -74,15 +73,11 @@ Call \`zk:lobby_start_game\` with \`headless: false\` to start a local game with
 
 Send commands as JSON text to the game channel. Always include the channelId.
 
-### Time Control
-- \`{"type":"pause"}\` — Freeze the game to think
-- \`{"type":"unpause"}\` — Resume real-time execution
-
 ### Unit Orders
 - \`{"type":"move","unit_id":N,"x":F,"y":F,"z":F,"queue":true}\` — Move unit to position
 - \`{"type":"stop","unit_id":N}\` — Cancel all orders
 - \`{"type":"attack","unit_id":N,"target_id":N,"queue":true}\` — Attack a unit
-- \`{"type":"build","unit_id":N,"build_def_name":"defname","x":F,"y":F,"z":F,"facing":0,"queue":true}\` — Build a unit/structure by def name
+- \`{"type":"build","unit_id":N,"build_def_name":"defname","x":F,"y":F,"z":F,"facing":0,"queue":true}\` — Build a unit/structure by def name. Coordinates are auto-snapped to the nearest valid build position, so approximate coordinates (e.g. from metal spot data) are fine.
 - \`{"type":"patrol","unit_id":N,"x":F,"y":F,"z":F,"queue":true}\` — Patrol to position
 - \`{"type":"fight","unit_id":N,"x":F,"y":F,"z":F,"queue":true}\` — Attack-move toward position
 - \`{"type":"guard","unit_id":N,"guard_id":N,"queue":true}\` — Guard another unit
@@ -95,7 +90,7 @@ Send commands as JSON text to the game channel. Always include the channelId.
 
 Events arrive as channel messages. Key events and what to do:
 
-- **init** — Game started. Pause and plan your opening.
+- **init** — Game started. Your commander spawns moments later as a \`unit_finished\` event — wait for that to learn your commander's unit ID before issuing orders.
 - **command_error** {error, command} — A command you sent failed. Read the error message carefully — common causes: invalid unit_id (unit doesn't exist or you used a wrong ID), unit belongs to another team, or unknown build def name. **Always use unit IDs from events you received, never guess or fabricate them.**
 - **unit_created** {unit, unit_name, builder, builder_name} — A new unit appeared.
 - **unit_finished** {unit, unit_name} — Construction complete. The unit is now active.
@@ -174,21 +169,24 @@ Map coordinates: x and z are horizontal (map plane), y is height (usually 0 for 
 
 ## Sleep/Wake Pattern
 
-After issuing commands and unpausing, call \`wake:set_conditions\` to sleep until something interesting happens:
+After issuing commands, call \`wake:set_conditions\` to sleep until something interesting happens:
 
 \`\`\`
-wake:set_conditions({events: ["unit_finished", "enemy_enter_los", "unit_damaged"], timeout_s: 30})
+wake:set_conditions({events: ["command_error", "unit_finished", "unit_idle", "enemy_enter_los", "unit_damaged"], timeout_s: 30})
 \`\`\`
 
 You'll be woken when a matching event arrives OR the timeout expires. All events that occurred while you slept will be in your context when you wake up.
 
 **Always set wake conditions after acting** — otherwise every single event triggers a new think cycle, which is wasteful. Typical wake events:
+- \`command_error\` — a command failed, you need to react
 - \`unit_finished\` — a unit you ordered to build is done
 - \`unit_idle\` — a unit needs orders
 - \`unit_damaged\` — you're under attack
 - \`enemy_enter_los\` — new enemy spotted
 - \`enemy_destroyed\` — kill confirmed
 - \`release\` — game over
+
+**Always include \`command_error\` in your wake events** so you're woken if something goes wrong.
 `;
 
 async function main() {
@@ -263,7 +261,7 @@ async function main() {
   framework.pushEvent({
     type: 'external-message',
     source: 'system',
-    content: `Start a local game: call zk:lobby_start_game with map "${config.map}", opponent "${config.opponent}", and headless: false. Then set wake conditions for the "init" event. When you receive init, pause and begin your opening: build staticmex on the nearest metal spots, then a factorycloak.`,
+    content: `Start a local game: call zk:lobby_start_game with map "${config.map}", opponent "${config.opponent}", and headless: false. Then set wake conditions for the "unit_finished" event — this is when your commander spawns and you learn its unit ID. When you wake, begin your opening: build staticmex on the nearest metal spots with your commander, then a factorycloak.`,
     metadata: { initial: true },
     triggerInference: true,
   });

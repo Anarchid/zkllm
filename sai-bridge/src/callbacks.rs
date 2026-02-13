@@ -120,6 +120,50 @@ impl EngineCallbacks {
         call!(self, Map_getHeight, self.ai_id)
     }
 
+    /// Check if a building can be placed at a given position.
+    pub fn map_can_build_at(&self, unit_def_id: i32, pos: &[f32; 3], facing: i32) -> bool {
+        let mut pos_copy = *pos;
+        call!(
+            self,
+            Map_isPossibleToBuildAt,
+            self.ai_id,
+            unit_def_id,
+            pos_copy.as_mut_ptr(),
+            facing
+        )
+    }
+
+    /// Find the closest valid build position near the given coordinates.
+    /// Returns None if no valid position found (engine returns {-1, 0, 0}).
+    pub fn map_find_closest_build_site(
+        &self,
+        unit_def_id: i32,
+        pos: &[f32; 3],
+        search_radius: f32,
+        min_dist: i32,
+        facing: i32,
+    ) -> Option<[f32; 3]> {
+        let mut pos_copy = *pos;
+        let mut result = [0.0f32; 3];
+        call!(
+            self,
+            Map_findClosestBuildSite,
+            self.ai_id,
+            unit_def_id,
+            pos_copy.as_mut_ptr(),
+            search_radius,
+            min_dist,
+            facing,
+            result.as_mut_ptr()
+        );
+        // Engine returns {-1, 0, 0} if no valid position found
+        if result[0] < 0.0 {
+            None
+        } else {
+            Some(result)
+        }
+    }
+
     // ── Logging ──
 
     pub fn log(&self, msg: &str) {
@@ -132,16 +176,18 @@ impl EngineCallbacks {
 
     pub fn handle_command(
         &self,
-        command_id: c_int,
         command_topic: c_int,
         command_data: *mut c_void,
     ) -> c_int {
+        // commandId must be -1 to use NETMSG_AICOMMAND (14).
+        // Any other value triggers NETMSG_AICOMMAND_TRACKED (76)
+        // which this engine version's server does not handle.
         call!(
             self,
             Engine_handleCommand,
             self.ai_id,
             COMMAND_TO_ID_ENGINE,
-            command_id,
+            -1 as c_int,
             command_topic,
             command_data
         )

@@ -146,7 +146,7 @@ pub fn dispatch(cb: &EngineCallbacks, cmd: &GameCommand) -> Result<(), String> {
                 time_out: i32::MAX,
                 to_pos: &mut pos as *mut [c_float; 3],
             };
-            cb.handle_command(0, COMMAND_UNIT_MOVE, &mut data as *mut _ as *mut c_void)
+            cb.handle_command(COMMAND_UNIT_MOVE, &mut data as *mut _ as *mut c_void)
         }
 
         GameCommand::Stop { unit_id } => {
@@ -157,7 +157,7 @@ pub fn dispatch(cb: &EngineCallbacks, cmd: &GameCommand) -> Result<(), String> {
                 options: 0,
                 time_out: i32::MAX,
             };
-            cb.handle_command(0, COMMAND_UNIT_STOP, &mut data as *mut _ as *mut c_void)
+            cb.handle_command(COMMAND_UNIT_STOP, &mut data as *mut _ as *mut c_void)
         }
 
         GameCommand::Attack {
@@ -173,7 +173,7 @@ pub fn dispatch(cb: &EngineCallbacks, cmd: &GameCommand) -> Result<(), String> {
                 time_out: i32::MAX,
                 to_attack_unit_id: *target_id as c_int,
             };
-            cb.handle_command(0, COMMAND_UNIT_ATTACK, &mut data as *mut _ as *mut c_void)
+            cb.handle_command(COMMAND_UNIT_ATTACK, &mut data as *mut _ as *mut c_void)
         }
 
         GameCommand::Build {
@@ -194,7 +194,17 @@ pub fn dispatch(cb: &EngineCallbacks, cmd: &GameCommand) -> Result<(), String> {
             } else {
                 *build_def_id
             };
-            let mut pos: [c_float; 3] = [*x, *y, *z];
+            // Snap to closest valid build position (handles ZK's precise blockmap)
+            let requested_pos: [c_float; 3] = [*x, *y, *z];
+            let mut pos = cb
+                .map_find_closest_build_site(def_id, &requested_pos, 200.0, 0, *facing)
+                .ok_or_else(|| {
+                    format!(
+                        "No valid build position found near ({}, {}, {}) for def {}",
+                        x, y, z,
+                        build_def_name.as_deref().unwrap_or("?")
+                    )
+                })?;
             let mut data = SBuildUnitCommand {
                 unit_id: *unit_id as c_int,
                 group_id: -1,
@@ -204,7 +214,7 @@ pub fn dispatch(cb: &EngineCallbacks, cmd: &GameCommand) -> Result<(), String> {
                 build_pos: &mut pos as *mut [c_float; 3],
                 facing: *facing as c_int,
             };
-            cb.handle_command(0, COMMAND_UNIT_BUILD, &mut data as *mut _ as *mut c_void)
+            cb.handle_command(COMMAND_UNIT_BUILD, &mut data as *mut _ as *mut c_void)
         }
 
         GameCommand::Patrol {
@@ -223,7 +233,7 @@ pub fn dispatch(cb: &EngineCallbacks, cmd: &GameCommand) -> Result<(), String> {
                 time_out: i32::MAX,
                 to_pos: &mut pos as *mut [c_float; 3],
             };
-            cb.handle_command(0, COMMAND_UNIT_PATROL, &mut data as *mut _ as *mut c_void)
+            cb.handle_command(COMMAND_UNIT_PATROL, &mut data as *mut _ as *mut c_void)
         }
 
         GameCommand::Fight {
@@ -242,7 +252,7 @@ pub fn dispatch(cb: &EngineCallbacks, cmd: &GameCommand) -> Result<(), String> {
                 time_out: i32::MAX,
                 to_pos: &mut pos as *mut [c_float; 3],
             };
-            cb.handle_command(0, COMMAND_UNIT_FIGHT, &mut data as *mut _ as *mut c_void)
+            cb.handle_command(COMMAND_UNIT_FIGHT, &mut data as *mut _ as *mut c_void)
         }
 
         GameCommand::Guard {
@@ -258,7 +268,7 @@ pub fn dispatch(cb: &EngineCallbacks, cmd: &GameCommand) -> Result<(), String> {
                 time_out: i32::MAX,
                 to_guard_unit_id: *guard_id as c_int,
             };
-            cb.handle_command(0, COMMAND_UNIT_GUARD, &mut data as *mut _ as *mut c_void)
+            cb.handle_command(COMMAND_UNIT_GUARD, &mut data as *mut _ as *mut c_void)
         }
 
         GameCommand::Repair {
@@ -274,7 +284,7 @@ pub fn dispatch(cb: &EngineCallbacks, cmd: &GameCommand) -> Result<(), String> {
                 time_out: i32::MAX,
                 to_repair_unit_id: *repair_id as c_int,
             };
-            cb.handle_command(0, COMMAND_UNIT_REPAIR, &mut data as *mut _ as *mut c_void)
+            cb.handle_command(COMMAND_UNIT_REPAIR, &mut data as *mut _ as *mut c_void)
         }
 
         GameCommand::SetFireState { unit_id, state } => {
@@ -287,7 +297,6 @@ pub fn dispatch(cb: &EngineCallbacks, cmd: &GameCommand) -> Result<(), String> {
                 fire_state: *state as c_int,
             };
             cb.handle_command(
-                0,
                 COMMAND_UNIT_SET_FIRE_STATE,
                 &mut data as *mut _ as *mut c_void,
             )
@@ -303,7 +312,6 @@ pub fn dispatch(cb: &EngineCallbacks, cmd: &GameCommand) -> Result<(), String> {
                 move_state: *state as c_int,
             };
             cb.handle_command(
-                0,
                 COMMAND_UNIT_SET_MOVE_STATE,
                 &mut data as *mut _ as *mut c_void,
             )
@@ -316,26 +324,16 @@ pub fn dispatch(cb: &EngineCallbacks, cmd: &GameCommand) -> Result<(), String> {
                 zone: 0,
             };
             cb.handle_command(
-                0,
                 COMMAND_SEND_TEXT_MESSAGE,
                 &mut data as *mut _ as *mut c_void,
             )
         }
 
-        GameCommand::Pause => {
-            let mut data = SPauseCommand {
-                enable: true,
-                reason: std::ptr::null(),
-            };
-            cb.handle_command(0, COMMAND_PAUSE, &mut data as *mut _ as *mut c_void)
-        }
-
-        GameCommand::Unpause => {
-            let mut data = SPauseCommand {
-                enable: false,
-                reason: std::ptr::null(),
-            };
-            cb.handle_command(0, COMMAND_PAUSE, &mut data as *mut _ as *mut c_void)
+        GameCommand::Pause | GameCommand::Unpause => {
+            // No-op: pausing the engine deadlocks the AI (UPDATE events stop,
+            // so the bridge can never poll the unpause command).
+            // The agent plays in real-time; wake/sleep handles pacing.
+            return Ok(());
         }
 
         GameCommand::SetSpeed { .. } => {
