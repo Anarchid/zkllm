@@ -123,7 +123,17 @@ export class WakeModule implements Module {
     };
   }
 
-  async onProcess(_event: ProcessEvent, _state: ProcessState): Promise<EventResponse> {
+  async onProcess(event: ProcessEvent, _state: ProcessState): Promise<EventResponse> {
+    // Handle system bootstrap messages (no other module claims these)
+    if (event.type === 'external-message' && event.source === 'system') {
+      return {
+        addMessages: [{
+          participant: 'user',
+          content: [{ type: 'text', text: String(event.content) }],
+        }],
+        requestInference: true,
+      };
+    }
     return {};
   }
 
