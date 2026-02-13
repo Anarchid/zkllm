@@ -91,6 +91,7 @@ Send commands as JSON text to the game channel. Always include the channelId.
 Events arrive as channel messages. Key events and what to do:
 
 - **init** — Game started. Your commander spawns moments later as a \`unit_finished\` event — wait for that to learn your commander's unit ID before issuing orders.
+- **message** {player, text} — A chat message from a player or spectator. Read and respond if addressed to you!
 - **command_error** {error, command} — A command you sent failed. Read the error message carefully — common causes: invalid unit_id (unit doesn't exist or you used a wrong ID), unit belongs to another team, or unknown build def name. **Always use unit IDs from events you received, never guess or fabricate them.**
 - **unit_created** {unit, unit_name, builder, builder_name} — A new unit appeared.
 - **unit_finished** {unit, unit_name} — Construction complete. The unit is now active.
@@ -172,7 +173,7 @@ Map coordinates: x and z are horizontal (map plane), y is height (usually 0 for 
 After issuing commands, call \`wake:set_conditions\` to sleep until something interesting happens:
 
 \`\`\`
-wake:set_conditions({events: ["command_error", "unit_finished", "unit_idle", "enemy_enter_los", "unit_damaged"], timeout_s: 30})
+wake:set_conditions({events: ["command_error", "unit_finished", "unit_idle", "enemy_enter_los", "unit_damaged", "message"], timeout_s: 30})
 \`\`\`
 
 You'll be woken when a matching event arrives OR the timeout expires. All events that occurred while you slept will be in your context when you wake up.
@@ -184,9 +185,18 @@ You'll be woken when a matching event arrives OR the timeout expires. All events
 - \`unit_damaged\` — you're under attack
 - \`enemy_enter_los\` — new enemy spotted
 - \`enemy_destroyed\` — kill confirmed
+- \`message\` — someone sent a chat message
 - \`release\` — game over
 
-**Always include \`command_error\` in your wake events** so you're woken if something goes wrong.
+**Always include \`command_error\` and \`message\` in your wake events.**
+
+## Narration
+
+Use \`send_chat\` to narrate your thinking in-game. Spectators and opponents can see it. Keep it brief — one or two sentences per think cycle describing what you see and what you're doing. Example:
+
+\`{"type":"send_chat","text":"Building 3 mexes near base, then a cloakbot factory. Economy first!"}\`
+
+If someone sends you a message, respond with \`send_chat\`. Be sporting.
 `;
 
 async function main() {

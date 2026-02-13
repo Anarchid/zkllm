@@ -318,7 +318,10 @@ pub fn dispatch(cb: &EngineCallbacks, cmd: &GameCommand) -> Result<(), String> {
         }
 
         GameCommand::SendChat { text } => {
-            let c_text = CString::new(text.as_str()).map_err(|e| e.to_string())?;
+            // SendTextMsg only handles /commands — plain text is ignored.
+            // Prepend /say to send actual network chat visible to all players.
+            let say_text = format!("/say {}", text);
+            let c_text = CString::new(say_text.as_str()).map_err(|e| e.to_string())?;
             let mut data = SSendTextMessageCommand {
                 text: c_text.as_ptr(),
                 zone: 0,
