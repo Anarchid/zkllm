@@ -74,7 +74,7 @@ pub unsafe extern "C" fn init(
     callback: *const SSkirmishAICallback,
 ) -> c_int {
     let cb = unsafe { EngineCallbacks::new(skirmish_ai_id, callback) };
-    cb.log("[SAI Bridge] Initializing...");
+    cb.log("[SAI Bridge] Initializing... (v2 — enrichment + name commands)");
 
     // Connect to GameManager
     let socket_path = get_socket_path(&cb);
@@ -183,6 +183,7 @@ pub unsafe extern "C" fn handleEvent(
         if let Some(ref mut ipc) = instance.ipc {
             let cmds = ipc.poll_commands();
             for cmd in &cmds {
+                instance.callbacks.log(&format!("[SAI Bridge] Dispatching: {:?}", cmd));
                 if let Err(e) = commands::dispatch(&instance.callbacks, cmd) {
                     instance
                         .callbacks
