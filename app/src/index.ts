@@ -21,7 +21,7 @@
 
 import 'dotenv/config';
 import { Membrane, AnthropicAdapter } from 'membrane';
-import { AgentFramework, MCPLModule } from '@connectome/agent-framework';
+import { AgentFramework, MCPLModule, ApiServer } from '@connectome/agent-framework';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { homedir } from 'node:os';
@@ -191,9 +191,12 @@ async function main() {
         process.stdout.write('\n');
         console.log('[INFERENCE] Complete');
         break;
-      case 'inference:failed':
-        console.error('[ERROR]', (event as { error?: string }).error);
+      case 'inference:failed': {
+        const err = event as { error?: string; stack?: string };
+        console.error('[ERROR]', err.error);
+        if (err.stack) console.error(err.stack);
         break;
+      }
       case 'inference:tool_calls_yielded': {
         const calls = (event as { calls: Array<{ name: string }> }).calls;
         console.log(`\n[TOOLS] ${calls.map((c) => c.name).join(', ')}`);
@@ -205,8 +208,11 @@ async function main() {
     }
   });
 
+  const apiServer = new ApiServer(framework);
+  await apiServer.start();
+
   framework.start();
-  console.log('Framework started');
+  console.log('Framework started (API on :8765)');
 
   // Kick off the game
   framework.pushEvent({
@@ -219,6 +225,7 @@ async function main() {
 
   process.on('SIGINT', async () => {
     console.log('\nShutting down...');
+    await apiServer.stop();
     await framework.stop();
     process.exit(0);
   });
