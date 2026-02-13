@@ -22,8 +22,11 @@
 import 'dotenv/config';
 import { Membrane, AnthropicAdapter } from 'membrane';
 import { AgentFramework, MCPLModule } from '@connectome/agent-framework';
-import { resolve } from 'node:path';
+import { resolve, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { homedir } from 'node:os';
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
 import { WakeModule } from './wake-module.js';
 
 const config = {
