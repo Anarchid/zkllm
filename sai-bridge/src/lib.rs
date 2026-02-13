@@ -188,6 +188,12 @@ pub unsafe extern "C" fn handleEvent(
                     instance
                         .callbacks
                         .log(&format!("[SAI Bridge] Command error: {}", e));
+                    // Send error back to GameManager so the agent sees it
+                    let error_event = GameEvent::CommandError {
+                        error: e,
+                        command: format!("{:?}", cmd),
+                    };
+                    let _ = ipc.send_event(&error_event);
                 }
             }
         }

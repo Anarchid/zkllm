@@ -101,6 +101,31 @@ pub enum GameCommand {
     SetSpeed { speed: f32 },
 }
 
+/// Translate engine return codes to human-readable errors.
+fn describe_error(code: c_int) -> &'static str {
+    match code {
+        -1 => "invalid unit ID or null command",
+        -2 => "orders not allowed (AI may lack authority)",
+        -3 => "unit does not exist",
+        -4 => "unknown error (-4)",
+        -5 => "unit does not belong to this AI's team",
+        _ => "unknown error",
+    }
+}
+
+/// Validate that a unit_id refers to an existing unit owned by the AI.
+/// Returns a descriptive error if not.
+fn validate_unit(cb: &EngineCallbacks, unit_id: i32) -> Result<(), String> {
+    let def_id = cb.unit_get_def(unit_id);
+    if def_id < 0 {
+        return Err(format!(
+            "unit {} does not exist (unit_get_def returned {})",
+            unit_id, def_id
+        ));
+    }
+    Ok(())
+}
+
 /// Dispatch a GameCommand to the engine via callbacks.
 /// Returns Ok(()) on success, Err with description on failure.
 pub fn dispatch(cb: &EngineCallbacks, cmd: &GameCommand) -> Result<(), String> {
@@ -112,6 +137,7 @@ pub fn dispatch(cb: &EngineCallbacks, cmd: &GameCommand) -> Result<(), String> {
             z,
             queue,
         } => {
+            validate_unit(cb, *unit_id)?;
             let mut pos: [c_float; 3] = [*x, *y, *z];
             let mut data = SMoveUnitCommand {
                 unit_id: *unit_id as c_int,
@@ -124,6 +150,7 @@ pub fn dispatch(cb: &EngineCallbacks, cmd: &GameCommand) -> Result<(), String> {
         }
 
         GameCommand::Stop { unit_id } => {
+            validate_unit(cb, *unit_id)?;
             let mut data = SStopUnitCommand {
                 unit_id: *unit_id as c_int,
                 group_id: -1,
@@ -138,6 +165,7 @@ pub fn dispatch(cb: &EngineCallbacks, cmd: &GameCommand) -> Result<(), String> {
             target_id,
             queue,
         } => {
+            validate_unit(cb, *unit_id)?;
             let mut data = SAttackUnitCommand {
                 unit_id: *unit_id as c_int,
                 group_id: -1,
@@ -158,6 +186,7 @@ pub fn dispatch(cb: &EngineCallbacks, cmd: &GameCommand) -> Result<(), String> {
             facing,
             queue,
         } => {
+            validate_unit(cb, *unit_id)?;
             // Resolve def name to ID if provided, otherwise use numeric ID
             let def_id = if let Some(name) = build_def_name {
                 cb.get_unit_def_by_name(name)
@@ -185,6 +214,7 @@ pub fn dispatch(cb: &EngineCallbacks, cmd: &GameCommand) -> Result<(), String> {
             z,
             queue,
         } => {
+            validate_unit(cb, *unit_id)?;
             let mut pos: [c_float; 3] = [*x, *y, *z];
             let mut data = SPatrolUnitCommand {
                 unit_id: *unit_id as c_int,
@@ -203,6 +233,7 @@ pub fn dispatch(cb: &EngineCallbacks, cmd: &GameCommand) -> Result<(), String> {
             z,
             queue,
         } => {
+            validate_unit(cb, *unit_id)?;
             let mut pos: [c_float; 3] = [*x, *y, *z];
             let mut data = SFightUnitCommand {
                 unit_id: *unit_id as c_int,
@@ -219,6 +250,7 @@ pub fn dispatch(cb: &EngineCallbacks, cmd: &GameCommand) -> Result<(), String> {
             guard_id,
             queue,
         } => {
+            validate_unit(cb, *unit_id)?;
             let mut data = SGuardUnitCommand {
                 unit_id: *unit_id as c_int,
                 group_id: -1,
@@ -234,6 +266,7 @@ pub fn dispatch(cb: &EngineCallbacks, cmd: &GameCommand) -> Result<(), String> {
             repair_id,
             queue,
         } => {
+            validate_unit(cb, *unit_id)?;
             let mut data = SRepairUnitCommand {
                 unit_id: *unit_id as c_int,
                 group_id: -1,
@@ -245,6 +278,7 @@ pub fn dispatch(cb: &EngineCallbacks, cmd: &GameCommand) -> Result<(), String> {
         }
 
         GameCommand::SetFireState { unit_id, state } => {
+            validate_unit(cb, *unit_id)?;
             let mut data = SSetFireStateUnitCommand {
                 unit_id: *unit_id as c_int,
                 group_id: -1,
@@ -260,6 +294,7 @@ pub fn dispatch(cb: &EngineCallbacks, cmd: &GameCommand) -> Result<(), String> {
         }
 
         GameCommand::SetMoveState { unit_id, state } => {
+            validate_unit(cb, *unit_id)?;
             let mut data = SSetMoveStateUnitCommand {
                 unit_id: *unit_id as c_int,
                 group_id: -1,
@@ -316,6 +351,10 @@ pub fn dispatch(cb: &EngineCallbacks, cmd: &GameCommand) -> Result<(), String> {
     if result == 0 {
         Ok(())
     } else {
-        Err(format!("Engine_handleCommand returned {}", result))
+        Err(format!(
+            "Engine rejected command (code {}): {}",
+            result,
+            describe_error(result)
+        ))
     }
 }

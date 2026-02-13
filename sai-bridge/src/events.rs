@@ -351,6 +351,9 @@ pub enum GameEvent {
 
     #[serde(rename = "lua_message")]
     LuaMessage { data: String },
+
+    #[serde(rename = "command_error")]
+    CommandError { error: String, command: String },
 }
 
 /// Convert a raw C event (topic + data pointer) into a serializable GameEvent.

@@ -160,6 +160,8 @@ pub enum SaiEvent {
     },
     #[serde(rename = "lua_message")]
     LuaMessage { data: String },
+    #[serde(rename = "command_error")]
+    CommandError { error: String, command: String },
 }
 
 /// A command to send to a SAI bridge instance.

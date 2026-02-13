@@ -282,16 +282,19 @@ pub fn configure_headless_widgets(write_dir: &Path) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Check if dest file needs updating (missing or older than src).
+/// Check if dest file needs updating (missing or different from src).
+/// Compares file sizes first (recompilation almost always changes binary size),
+/// then falls back to mtime comparison.
 fn should_update(dest: &Path, src: &Path) -> anyhow::Result<bool> {
     if !dest.exists() {
         return Ok(true);
     }
     let src_meta = std::fs::metadata(src)?;
     let dest_meta = std::fs::metadata(dest)?;
-    let src_mod = src_meta.modified()?;
-    let dest_mod = dest_meta.modified()?;
-    Ok(src_mod > dest_mod)
+    if src_meta.len() != dest_meta.len() {
+        return Ok(true);
+    }
+    Ok(src_meta.modified()? > dest_meta.modified()?)
 }
 
 /// Resolve paths for SAI bridge components.
