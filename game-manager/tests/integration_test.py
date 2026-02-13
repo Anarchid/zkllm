@@ -140,7 +140,7 @@ class IntegrationTest:
             "map": self.map_name,
             "game": self.game_name,
             "opponent": self.opponent,
-            "headless": True,
+            "headless": not self.player_mode,
         }
         if self.player_mode:
             tool_args["player_mode"] = True

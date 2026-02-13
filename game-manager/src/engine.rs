@@ -299,7 +299,7 @@ impl EngineInstance {
     IsHost=1;
     MyPlayerNum=0;
     MyPlayerName={agent_name};
-    StartPosType=2;
+    StartPosType=0;
     NumPlayers=1;
     NumUsers=2;
     NumTeams=2;
@@ -320,8 +320,8 @@ impl EngineInstance {
         Host=0;
     }}
 
-    [TEAM0] {{ TeamLeader=0; AllyTeam=0; }}
-    [TEAM1] {{ TeamLeader=0; AllyTeam=1; }}
+    [TEAM0] {{ TeamLeader=0; AllyTeam=0; StartPosX=1000; StartPosZ=1000; }}
+    [TEAM1] {{ TeamLeader=0; AllyTeam=1; StartPosX=7000; StartPosZ=7000; }}
     [ALLYTEAM0] {{ NumAllies=0; }}
     [ALLYTEAM1] {{ NumAllies=0; }}
 }}"#,

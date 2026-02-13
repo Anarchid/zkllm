@@ -138,8 +138,8 @@ pub fn init_write_dir(
     }
 
     // 6. Generate agent bootstrap config
-    let config_path = base.join("LuaUI/Config/agent_bootstrap.json");
-    if !config_path.exists() {
+    let json_path = base.join("LuaUI/Config/agent_bootstrap.json");
+    if !json_path.exists() {
         let config = serde_json::json!({
             "players": {
                 agent_name: {
@@ -148,8 +148,9 @@ pub fn init_write_dir(
                 }
             }
         });
-        std::fs::write(&config_path, serde_json::to_string_pretty(&config)?)?;
-        tracing::info!("  Generated agent_bootstrap.json for '{}'", agent_name);
+        std::fs::write(&json_path, serde_json::to_string_pretty(&config)?)?;
+        write_bootstrap_lua(base, &config)?;
+        tracing::info!("  Generated agent_bootstrap config for '{}'", agent_name);
     }
 
     // 7. Generate springsettings.cfg if missing
@@ -166,13 +167,13 @@ pub fn init_write_dir(
     Ok(())
 }
 
-/// Ensure a player name is whitelisted in agent_bootstrap.json.
+/// Ensure a player name is whitelisted in the bootstrap config.
 /// For multiplayer, the lobby username may differ from the default agent_name
 /// that was written at write-dir init time.
 pub fn ensure_player_whitelisted(write_dir: &Path, player_name: &str) -> anyhow::Result<()> {
-    let config_path = write_dir.join("LuaUI/Config/agent_bootstrap.json");
-    let mut config: serde_json::Value = if config_path.exists() {
-        let contents = std::fs::read_to_string(&config_path)?;
+    let json_path = write_dir.join("LuaUI/Config/agent_bootstrap.json");
+    let mut config: serde_json::Value = if json_path.exists() {
+        let contents = std::fs::read_to_string(&json_path)?;
         serde_json::from_str(&contents)?
     } else {
         serde_json::json!({"players": {}})
@@ -184,10 +185,100 @@ pub fn ensure_player_whitelisted(write_dir: &Path, player_name: &str) -> anyhow:
                 player_name.to_string(),
                 serde_json::json!({"ai": "AgentBridge", "version": "0.1"}),
             );
-            std::fs::write(&config_path, serde_json::to_string_pretty(&config)?)?;
-            tracing::info!("Added '{}' to agent_bootstrap.json", player_name);
+            std::fs::write(&json_path, serde_json::to_string_pretty(&config)?)?;
+            write_bootstrap_lua(write_dir, &config)?;
+            tracing::info!("Added '{}' to bootstrap config", player_name);
         }
     }
+    Ok(())
+}
+
+/// Generate the Lua config file that the widget reads via VFS.Include.
+/// The JSON file is Rust's source of truth; this is the generated output.
+fn write_bootstrap_lua(write_dir: &Path, config: &serde_json::Value) -> anyhow::Result<()> {
+    let lua_path = write_dir.join("LuaUI/Config/agent_bootstrap_config.lua");
+    let lua = format!("return {}\n", json_to_lua(config, 0));
+    std::fs::write(&lua_path, lua)?;
+    Ok(())
+}
+
+/// Convert a serde_json::Value to a Lua table literal string.
+fn json_to_lua(value: &serde_json::Value, indent: usize) -> String {
+    let pad = "  ".repeat(indent);
+    let inner = "  ".repeat(indent + 1);
+    match value {
+        serde_json::Value::Object(map) => {
+            if map.is_empty() {
+                return "{}".to_string();
+            }
+            let entries: Vec<String> = map
+                .iter()
+                .map(|(k, v)| format!("{}[\"{}\"] = {}", inner, k, json_to_lua(v, indent + 1)))
+                .collect();
+            format!("{{\n{},\n{}}}", entries.join(",\n"), pad)
+        }
+        serde_json::Value::String(s) => {
+            format!("\"{}\"", s.replace('\\', "\\\\").replace('"', "\\\""))
+        }
+        serde_json::Value::Bool(b) => b.to_string(),
+        serde_json::Value::Number(n) => n.to_string(),
+        serde_json::Value::Null => "nil".to_string(),
+        serde_json::Value::Array(arr) => {
+            let items: Vec<String> = arr.iter().map(|v| json_to_lua(v, indent + 1)).collect();
+            format!("{{ {} }}", items.join(", "))
+        }
+    }
+}
+
+/// Configure ZK_order.lua to disable all widgets except Agent Bootstrap.
+/// Called before headless player-mode engine launches to prevent LuaUI OOM.
+pub fn configure_headless_widgets(write_dir: &Path) -> anyhow::Result<()> {
+    let order_path = write_dir.join("LuaUI/Config/ZK_order.lua");
+
+    if order_path.exists() {
+        // Read existing order file and set everything to 0 except our widget
+        let content = std::fs::read_to_string(&order_path)?;
+        let mut new_lines = Vec::new();
+        for line in content.lines() {
+            if line.contains("Agent Bootstrap") {
+                // Keep our widget enabled
+                new_lines.push(line.to_string());
+            } else if line.contains("] =") && !line.starts_with("--") {
+                // Disable other widgets: replace the order number with 0
+                if let Some(eq_pos) = line.rfind("= ") {
+                    let mut disabled = line[..eq_pos + 2].to_string();
+                    disabled.push_str("0,");
+                    new_lines.push(disabled);
+                } else {
+                    new_lines.push(line.to_string());
+                }
+            } else {
+                new_lines.push(line.to_string());
+            }
+        }
+        std::fs::write(&order_path, new_lines.join("\n"))?;
+    } else {
+        // No prior run — write minimal order file.
+        // Widgets not in this list get enabled by default if LuaAutoModWidgets=1,
+        // so we also set that to 0 in springsettings.
+        std::fs::write(
+            &order_path,
+            "-- Widget Order List  (0 disables a widget)\nreturn {\n\t[\"Agent Bootstrap\"] = 1,\n\tversion = 8,\n}\n",
+        )?;
+    }
+
+    // Ensure LuaAutoModWidgets=0 so unknown widgets from archives don't auto-enable
+    let settings_path = write_dir.join("springsettings.cfg");
+    if settings_path.exists() {
+        let content = std::fs::read_to_string(&settings_path)?;
+        if !content.contains("LuaAutoModWidgets") {
+            let mut new_content = content;
+            new_content.push_str("LuaAutoModWidgets=0\n");
+            std::fs::write(&settings_path, new_content)?;
+        }
+    }
+
+    tracing::info!("Configured headless widget order (only Agent Bootstrap enabled)");
     Ok(())
 }
 
@@ -292,8 +383,8 @@ impl WriteDirConfig {
 }
 
 const HEADLESS_SETTINGS: &str = "\
-XResolution=1
-YResolution=1
+XResolution=1280
+YResolution=720
 WindowState=0
 Fullscreen=0
 VSync=0

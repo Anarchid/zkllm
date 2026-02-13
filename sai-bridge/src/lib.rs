@@ -31,13 +31,10 @@ static INSTANCES: Mutex<Vec<Option<AiInstance>>> = Mutex::new(Vec::new());
 const UPDATE_INTERVAL: u32 = 30;
 
 fn get_socket_path(cb: &EngineCallbacks) -> String {
-    // 1. AI option (startscript [Options] — AI-slot mode)
-    if let Some(path) = cb.get_option_value("socket_path") {
-        cb.log("[SAI Bridge] Socket path from AI option");
-        return path;
-    }
-
-    // 2. connection.json in AI data dir (player mode via /aicontrol)
+    // 1. connection.json in AI data dir (written by GM before each launch).
+    //    Checked first because AIOptions.lua declares a default for socket_path,
+    //    so get_option_value always returns *something* — even for dynamically
+    //    created AIs via /aicontrol that have no startscript [Options] block.
     if let Some(data_dir) = cb.get_info_value("dataDir") {
         let config_path = format!("{}/connection.json", data_dir.trim_end_matches('/'));
         if let Ok(contents) = std::fs::read_to_string(&config_path) {
@@ -48,6 +45,12 @@ fn get_socket_path(cb: &EngineCallbacks) -> String {
                 }
             }
         }
+    }
+
+    // 2. AI option (startscript [Options] — AI-slot mode fallback)
+    if let Some(path) = cb.get_option_value("socket_path") {
+        cb.log("[SAI Bridge] Socket path from AI option");
+        return path;
     }
 
     // 3. Environment variable
