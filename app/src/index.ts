@@ -126,12 +126,46 @@ Unit IDs are numeric (e.g. 42). The \`unit_name\`/\`enemy_name\` fields give the
 - **Skirmishers**: Long-range units that kite enemies
 - **Artillery**: Very long range, slow, area damage
 
+**Key unit def names** (use these in build_def_name):
+
+Economy & infrastructure:
+- \`staticmex\` — Metal Extractor (build on metal spots!)
+- \`energysolar\` — Solar Collector
+- \`energywind\` — Wind Generator
+- \`staticradar\` — Radar Tower
+- \`staticstorage\` — Storage
+
+Factories:
+- \`factorycloak\` — Cloakbot Factory (good starter)
+- \`factoryshield\` — Shieldbot Factory
+- \`factoryveh\` — Rover Factory
+- \`factoryhover\` — Hovercraft Factory
+- \`factorygunship\` — Gunship Factory
+- \`factoryjump\` — Jumpbot Factory
+- \`factoryspider\` — Spider Factory
+- \`factorytank\` — Tank Factory
+
+Cloakbot units (from factorycloak):
+- \`cloakcon\` — Conjurer (constructor)
+- \`cloakraid\` — Glaive (raider — fast, cheap)
+- \`cloakskirm\` — Rocko (skirmisher — medium range)
+- \`cloakriot\` — Warrior (riot — close range AoE)
+- \`cloakassault\` — Knight (assault — tough frontliner)
+- \`cloakarty\` — Sling (artillery)
+- \`cloaksnipe\` — Phantom (sniper)
+- \`cloakaa\` — Angler (anti-air)
+
+Defense:
+- \`turretlaser\` — Lotus (light laser turret)
+- \`turretmissile\` — Picket (light AA turret)
+- \`turretheavylaser\` — Stardust (medium laser turret)
+
 **Opening pattern**:
-1. Build 2-3 metal extractors with your commander
-2. Build a factory (e.g., Cloakbot Factory)
-3. Produce constructors and combat units
-4. Expand to more metal spots
-5. Scout the enemy
+1. Build 2-3 \`staticmex\` on nearby metal spots with your commander
+2. Build a \`factorycloak\` (or another factory)
+3. Produce \`cloakcon\` (constructors) and \`cloakraid\` (raiders) from the factory
+4. Expand to more metal spots with constructors
+5. Scout the enemy with raiders
 6. Attack when you have an advantage
 
 Map coordinates: x and z are horizontal (map plane), y is height (usually 0 for ground level).
@@ -227,7 +261,7 @@ async function main() {
   framework.pushEvent({
     type: 'external-message',
     source: 'system',
-    content: `Start a local game: call zk:lobby_start_game with map "${config.map}" and opponent "${config.opponent}". Then wait for the init event on the game channel.`,
+    content: `Start a local game: call zk:lobby_start_game with map "${config.map}", opponent "${config.opponent}", and headless: false. Then set wake conditions for the "init" event. When you receive init, pause and begin your opening: build staticmex on the nearest metal spots, then a factorycloak.`,
     metadata: { initial: true },
     triggerInference: true,
   });
