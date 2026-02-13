@@ -184,9 +184,11 @@ async function main() {
       case 'inference:started':
         console.log('\n[INFERENCE] Starting...');
         break;
-      case 'inference:tokens':
-        process.stdout.write((event as { content: string }).content);
+      case 'inference:tokens': {
+        const content = (event as { content?: string }).content;
+        if (content) process.stdout.write(content);
         break;
+      }
       case 'inference:completed':
         process.stdout.write('\n');
         console.log('[INFERENCE] Complete');

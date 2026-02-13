@@ -153,6 +153,12 @@ pub enum SaiCommand {
     SetMoveState { unit_id: i32, state: i32 },
     #[serde(rename = "send_chat")]
     SendChat { text: String },
+    #[serde(rename = "pause")]
+    Pause,
+    #[serde(rename = "unpause")]
+    Unpause,
+    #[serde(rename = "set_speed")]
+    SetSpeed { speed: f32 },
 }
 
 /// A connected SAI bridge instance.

@@ -4,7 +4,8 @@
  * Lets the agent specify which SAI events should wake it up.
  * Events that don't match are still delivered to context but
  * don't trigger inference. One-shot: conditions clear on match
- * or timeout, returning to "always trigger" until re-set.
+ * or timeout, entering suppressed state (no triggers) until
+ * the agent explicitly calls set_conditions again.
  */
 
 import type {
@@ -28,22 +29,27 @@ export class WakeModule implements Module {
   private ctx: ModuleContext | null = null;
   private conditions: WakeConditions | null = null;
   private timer: ReturnType<typeof setTimeout> | null = null;
+  /** After conditions fire, suppress all triggers until agent sets new conditions. */
+  private suppressed = false;
 
   /**
    * Callback for MCPLModule's shouldTriggerInference.
    * Arrow function to preserve `this` binding.
    */
   shouldTrigger = (content: string, _metadata: Record<string, unknown>): boolean => {
+    // After conditions fire, stay quiet until agent explicitly sets new conditions
+    if (this.suppressed) return false;
+    // No conditions set (initial state) — trigger on everything
     if (!this.conditions) return true;
 
     // Try to extract SAI event type from the message content.
-    // Content format: "[channel:game:local-1] sai: {\"type\":\"unit_idle\",...}"
+    // Content format: "[channel:game:local-1] Game Engine: {\"type\":\"unit_idle\",...}"
     try {
       const jsonMatch = content.match(/\{[^]*\}/);
       if (jsonMatch) {
         const parsed = JSON.parse(jsonMatch[0]);
         if (parsed.type && this.conditions.events.includes(parsed.type)) {
-          this.clearConditions();
+          this.consumeConditions();
           return true;
         }
       }
@@ -100,15 +106,16 @@ export class WakeModule implements Module {
 
     const timeout_s = input.timeout_s ?? 30;
 
-    // Clear any previous conditions
+    // Clear any previous conditions and lift suppression
     this.clearConditions();
+    this.suppressed = false;
 
     // Set new conditions
     this.conditions = { events: input.events, timeout_s };
 
     // Start timeout
     this.timer = setTimeout(() => {
-      this.clearConditions();
+      this.consumeConditions();
       this.ctx?.pushEvent({
         type: 'inference-request',
         agentName: 'commander',
@@ -137,6 +144,17 @@ export class WakeModule implements Module {
     return {};
   }
 
+  /** Consume conditions on match/timeout — enter suppressed state. */
+  private consumeConditions(): void {
+    this.conditions = null;
+    this.suppressed = true;
+    if (this.timer) {
+      clearTimeout(this.timer);
+      this.timer = null;
+    }
+  }
+
+  /** Clear conditions without suppressing (used during stop/cleanup). */
   private clearConditions(): void {
     this.conditions = null;
     if (this.timer) {
