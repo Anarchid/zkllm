@@ -61,9 +61,14 @@ You play in a **pause → think → act → unpause** loop:
 
 The game runs in real-time while unpaused. You'll receive new events when things happen (units idle, enemies spotted, damage taken). Pause again when you need to think.
 
+## Safety Rules
+
+- **LOCAL GAMES ONLY.** Never use lobby_connect, lobby_login, lobby_register, or any matchmaker/battle tools. You do not have permission to connect to the multiplayer lobby server.
+- Only use \`zk:lobby_start_game\` to start local scrimmages.
+
 ## Starting the Game
 
-Call \`zk:lobby_start_game\` to start a local game. This creates a game channel. Once the game starts, you'll receive an \`init\` event on that channel — that's your cue to begin playing.
+Call \`zk:lobby_start_game\` with \`headless: false\` to start a local game with the game window visible. This creates a game channel. Once the game starts, you'll receive an \`init\` event on that channel — that's your cue to begin playing.
 
 ## Game Commands (via zk:channel_publish)
 
@@ -92,17 +97,19 @@ Send commands as JSON text to the game channel. Always include the channelId.
 Events arrive as channel messages. Key events and what to do:
 
 - **init** — Game started. Pause and plan your opening.
-- **unit_created** {unit, builder} — A new unit appeared. Note its ID.
-- **unit_finished** {unit} — Construction complete. The unit is now active.
-- **unit_idle** {unit} — A unit has no orders. **Always assign idle units work!**
-- **unit_damaged** {unit, attacker, damage} — You're under attack. Respond.
-- **unit_destroyed** {unit, attacker} — You lost a unit.
-- **enemy_enter_los** {enemy} — Enemy spotted! Assess the threat.
-- **enemy_leave_los** {enemy} — Enemy left your vision.
-- **enemy_enter_radar** {enemy} — Radar contact.
-- **enemy_destroyed** {enemy, attacker} — Kill confirmed.
-- **command_finished** {unit, command_id} — Unit finished an order.
+- **unit_created** {unit, unit_name, builder, builder_name} — A new unit appeared.
+- **unit_finished** {unit, unit_name} — Construction complete. The unit is now active.
+- **unit_idle** {unit, unit_name} — A unit has no orders. **Always assign idle units work!**
+- **unit_damaged** {unit, unit_name, attacker, attacker_name, damage} — You're under attack. Respond.
+- **unit_destroyed** {unit, unit_name, attacker, attacker_name} — You lost a unit.
+- **enemy_enter_los** {enemy, enemy_name} — Enemy spotted! Assess the threat.
+- **enemy_leave_los** {enemy, enemy_name} — Enemy left your vision.
+- **enemy_enter_radar** {enemy, enemy_name} — Radar contact.
+- **enemy_destroyed** {enemy, enemy_name, attacker, attacker_name} — Kill confirmed.
+- **command_finished** {unit, unit_name, command_id} — Unit finished an order.
 - **release** — Game over.
+
+Unit IDs are numeric (e.g. 42). The \`unit_name\`/\`enemy_name\` fields give the def name (e.g. "cloakraid", "armcom1"). Use both to track units: "cloakraid#42".
 
 ## Zero-K Basics
 

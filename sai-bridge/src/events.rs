@@ -1,6 +1,7 @@
 //! Event topic IDs and their data structs.
 //! Maps from the C `topicId` + `data` pointer to serializable Rust types.
 
+use crate::callbacks::EngineCallbacks;
 use serde::Serialize;
 use std::ffi::{c_char, c_float, c_int, c_void, CStr};
 
@@ -194,21 +195,44 @@ pub enum GameEvent {
     Message { player: i32, text: String },
 
     #[serde(rename = "unit_created")]
-    UnitCreated { unit: i32, builder: i32 },
+    UnitCreated {
+        unit: i32,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        unit_name: Option<String>,
+        builder: i32,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        builder_name: Option<String>,
+    },
 
     #[serde(rename = "unit_finished")]
-    UnitFinished { unit: i32 },
+    UnitFinished {
+        unit: i32,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        unit_name: Option<String>,
+    },
 
     #[serde(rename = "unit_idle")]
-    UnitIdle { unit: i32 },
+    UnitIdle {
+        unit: i32,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        unit_name: Option<String>,
+    },
 
     #[serde(rename = "unit_move_failed")]
-    UnitMoveFailed { unit: i32 },
+    UnitMoveFailed {
+        unit: i32,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        unit_name: Option<String>,
+    },
 
     #[serde(rename = "unit_damaged")]
     UnitDamaged {
         unit: i32,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        unit_name: Option<String>,
         attacker: i32,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        attacker_name: Option<String>,
         damage: f32,
         weapon_def_id: i32,
         paralyzer: bool,
@@ -217,13 +241,19 @@ pub enum GameEvent {
     #[serde(rename = "unit_destroyed")]
     UnitDestroyed {
         unit: i32,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        unit_name: Option<String>,
         attacker: i32,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        attacker_name: Option<String>,
         weapon_def_id: i32,
     },
 
     #[serde(rename = "unit_given")]
     UnitGiven {
         unit: i32,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        unit_name: Option<String>,
         old_team: i32,
         new_team: i32,
     },
@@ -231,46 +261,90 @@ pub enum GameEvent {
     #[serde(rename = "unit_captured")]
     UnitCaptured {
         unit: i32,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        unit_name: Option<String>,
         old_team: i32,
         new_team: i32,
     },
 
     #[serde(rename = "enemy_enter_los")]
-    EnemyEnterLos { enemy: i32 },
+    EnemyEnterLos {
+        enemy: i32,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        enemy_name: Option<String>,
+    },
 
     #[serde(rename = "enemy_leave_los")]
-    EnemyLeaveLos { enemy: i32 },
+    EnemyLeaveLos {
+        enemy: i32,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        enemy_name: Option<String>,
+    },
 
     #[serde(rename = "enemy_enter_radar")]
-    EnemyEnterRadar { enemy: i32 },
+    EnemyEnterRadar {
+        enemy: i32,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        enemy_name: Option<String>,
+    },
 
     #[serde(rename = "enemy_leave_radar")]
-    EnemyLeaveRadar { enemy: i32 },
+    EnemyLeaveRadar {
+        enemy: i32,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        enemy_name: Option<String>,
+    },
 
     #[serde(rename = "enemy_damaged")]
     EnemyDamaged {
         enemy: i32,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        enemy_name: Option<String>,
         attacker: i32,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        attacker_name: Option<String>,
         damage: f32,
         weapon_def_id: i32,
         paralyzer: bool,
     },
 
     #[serde(rename = "enemy_destroyed")]
-    EnemyDestroyed { enemy: i32, attacker: i32 },
+    EnemyDestroyed {
+        enemy: i32,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        enemy_name: Option<String>,
+        attacker: i32,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        attacker_name: Option<String>,
+    },
 
     #[serde(rename = "enemy_created")]
-    EnemyCreated { enemy: i32 },
+    EnemyCreated {
+        enemy: i32,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        enemy_name: Option<String>,
+    },
 
     #[serde(rename = "enemy_finished")]
-    EnemyFinished { enemy: i32 },
+    EnemyFinished {
+        enemy: i32,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        enemy_name: Option<String>,
+    },
 
     #[serde(rename = "weapon_fired")]
-    WeaponFired { unit: i32, weapon_def_id: i32 },
+    WeaponFired {
+        unit: i32,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        unit_name: Option<String>,
+        weapon_def_id: i32,
+    },
 
     #[serde(rename = "command_finished")]
     CommandFinished {
         unit: i32,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        unit_name: Option<String>,
         command_id: i32,
         command_topic: i32,
     },
@@ -316,26 +390,30 @@ pub unsafe fn parse_event(topic: c_int, data: *const c_void) -> Option<GameEvent
             let e = &*(data as *const SUnitCreatedEvent);
             Some(GameEvent::UnitCreated {
                 unit: e.unit,
+                unit_name: None,
                 builder: e.builder,
+                builder_name: None,
             })
         }
         EVENT_UNIT_FINISHED => {
             let e = &*(data as *const SUnitFinishedEvent);
-            Some(GameEvent::UnitFinished { unit: e.unit })
+            Some(GameEvent::UnitFinished { unit: e.unit, unit_name: None })
         }
         EVENT_UNIT_IDLE => {
             let e = &*(data as *const SUnitIdleEvent);
-            Some(GameEvent::UnitIdle { unit: e.unit })
+            Some(GameEvent::UnitIdle { unit: e.unit, unit_name: None })
         }
         EVENT_UNIT_MOVE_FAILED => {
             let e = &*(data as *const SUnitMoveFailedEvent);
-            Some(GameEvent::UnitMoveFailed { unit: e.unit })
+            Some(GameEvent::UnitMoveFailed { unit: e.unit, unit_name: None })
         }
         EVENT_UNIT_DAMAGED => {
             let e = &*(data as *const SUnitDamagedEvent);
             Some(GameEvent::UnitDamaged {
                 unit: e.unit,
+                unit_name: None,
                 attacker: e.attacker,
+                attacker_name: None,
                 damage: e.damage,
                 weapon_def_id: e.weapon_def_id,
                 paralyzer: e.paralyzer,
@@ -345,7 +423,9 @@ pub unsafe fn parse_event(topic: c_int, data: *const c_void) -> Option<GameEvent
             let e = &*(data as *const SUnitDestroyedEvent);
             Some(GameEvent::UnitDestroyed {
                 unit: e.unit,
+                unit_name: None,
                 attacker: e.attacker,
+                attacker_name: None,
                 weapon_def_id: e.weapon_def_id,
             })
         }
@@ -353,6 +433,7 @@ pub unsafe fn parse_event(topic: c_int, data: *const c_void) -> Option<GameEvent
             let e = &*(data as *const SUnitGivenEvent);
             Some(GameEvent::UnitGiven {
                 unit: e.unit_id,
+                unit_name: None,
                 old_team: e.old_team_id,
                 new_team: e.new_team_id,
             })
@@ -361,31 +442,34 @@ pub unsafe fn parse_event(topic: c_int, data: *const c_void) -> Option<GameEvent
             let e = &*(data as *const SUnitCapturedEvent);
             Some(GameEvent::UnitCaptured {
                 unit: e.unit_id,
+                unit_name: None,
                 old_team: e.old_team_id,
                 new_team: e.new_team_id,
             })
         }
         EVENT_ENEMY_ENTER_LOS => {
             let e = &*(data as *const SEnemyEnterLOSEvent);
-            Some(GameEvent::EnemyEnterLos { enemy: e.enemy })
+            Some(GameEvent::EnemyEnterLos { enemy: e.enemy, enemy_name: None })
         }
         EVENT_ENEMY_LEAVE_LOS => {
             let e = &*(data as *const SEnemyLeaveLOSEvent);
-            Some(GameEvent::EnemyLeaveLos { enemy: e.enemy })
+            Some(GameEvent::EnemyLeaveLos { enemy: e.enemy, enemy_name: None })
         }
         EVENT_ENEMY_ENTER_RADAR => {
             let e = &*(data as *const SEnemyEnterRadarEvent);
-            Some(GameEvent::EnemyEnterRadar { enemy: e.enemy })
+            Some(GameEvent::EnemyEnterRadar { enemy: e.enemy, enemy_name: None })
         }
         EVENT_ENEMY_LEAVE_RADAR => {
             let e = &*(data as *const SEnemyLeaveRadarEvent);
-            Some(GameEvent::EnemyLeaveRadar { enemy: e.enemy })
+            Some(GameEvent::EnemyLeaveRadar { enemy: e.enemy, enemy_name: None })
         }
         EVENT_ENEMY_DAMAGED => {
             let e = &*(data as *const SEnemyDamagedEvent);
             Some(GameEvent::EnemyDamaged {
                 enemy: e.enemy,
+                enemy_name: None,
                 attacker: e.attacker,
+                attacker_name: None,
                 damage: e.damage,
                 weapon_def_id: e.weapon_def_id,
                 paralyzer: e.paralyzer,
@@ -395,21 +479,24 @@ pub unsafe fn parse_event(topic: c_int, data: *const c_void) -> Option<GameEvent
             let e = &*(data as *const SEnemyDestroyedEvent);
             Some(GameEvent::EnemyDestroyed {
                 enemy: e.enemy,
+                enemy_name: None,
                 attacker: e.attacker,
+                attacker_name: None,
             })
         }
         EVENT_ENEMY_CREATED => {
             let e = &*(data as *const SEnemyCreatedEvent);
-            Some(GameEvent::EnemyCreated { enemy: e.enemy })
+            Some(GameEvent::EnemyCreated { enemy: e.enemy, enemy_name: None })
         }
         EVENT_ENEMY_FINISHED => {
             let e = &*(data as *const SEnemyFinishedEvent);
-            Some(GameEvent::EnemyFinished { enemy: e.enemy })
+            Some(GameEvent::EnemyFinished { enemy: e.enemy, enemy_name: None })
         }
         EVENT_WEAPON_FIRED => {
             let e = &*(data as *const SWeaponFiredEvent);
             Some(GameEvent::WeaponFired {
                 unit: e.unit_id,
+                unit_name: None,
                 weapon_def_id: e.weapon_def_id,
             })
         }
@@ -417,6 +504,7 @@ pub unsafe fn parse_event(topic: c_int, data: *const c_void) -> Option<GameEvent
             let e = &*(data as *const SCommandFinishedEvent);
             Some(GameEvent::CommandFinished {
                 unit: e.unit_id,
+                unit_name: None,
                 command_id: e.command_id,
                 command_topic: e.command_topic_id,
             })
@@ -431,5 +519,60 @@ pub unsafe fn parse_event(topic: c_int, data: *const c_void) -> Option<GameEvent
             Some(GameEvent::LuaMessage { data: data_str })
         }
         _ => None,
+    }
+}
+
+/// Resolve a unit instance ID to its definition name via engine callbacks.
+/// Returns None for invalid IDs (e.g. 0 or -1 for "no attacker").
+fn resolve_unit_name(cb: &EngineCallbacks, unit_id: i32) -> Option<String> {
+    if unit_id <= 0 {
+        return None;
+    }
+    let def_id = cb.unit_get_def(unit_id);
+    if def_id < 0 {
+        return None;
+    }
+    cb.unit_def_get_name(def_id)
+}
+
+/// Enrich a parsed event with human-readable unit names from the engine.
+pub fn enrich_event(event: &mut GameEvent, cb: &EngineCallbacks) {
+    match event {
+        GameEvent::UnitCreated { unit, unit_name, builder, builder_name, .. } => {
+            *unit_name = resolve_unit_name(cb, *unit);
+            *builder_name = resolve_unit_name(cb, *builder);
+        }
+        GameEvent::UnitFinished { unit, unit_name, .. } |
+        GameEvent::UnitIdle { unit, unit_name, .. } |
+        GameEvent::UnitMoveFailed { unit, unit_name, .. } => {
+            *unit_name = resolve_unit_name(cb, *unit);
+        }
+        GameEvent::UnitDamaged { unit, unit_name, attacker, attacker_name, .. } |
+        GameEvent::UnitDestroyed { unit, unit_name, attacker, attacker_name, .. } => {
+            *unit_name = resolve_unit_name(cb, *unit);
+            *attacker_name = resolve_unit_name(cb, *attacker);
+        }
+        GameEvent::UnitGiven { unit, unit_name, .. } |
+        GameEvent::UnitCaptured { unit, unit_name, .. } => {
+            *unit_name = resolve_unit_name(cb, *unit);
+        }
+        GameEvent::EnemyEnterLos { enemy, enemy_name, .. } |
+        GameEvent::EnemyLeaveLos { enemy, enemy_name, .. } |
+        GameEvent::EnemyEnterRadar { enemy, enemy_name, .. } |
+        GameEvent::EnemyLeaveRadar { enemy, enemy_name, .. } |
+        GameEvent::EnemyCreated { enemy, enemy_name, .. } |
+        GameEvent::EnemyFinished { enemy, enemy_name, .. } => {
+            *enemy_name = resolve_unit_name(cb, *enemy);
+        }
+        GameEvent::EnemyDamaged { enemy, enemy_name, attacker, attacker_name, .. } |
+        GameEvent::EnemyDestroyed { enemy, enemy_name, attacker, attacker_name, .. } => {
+            *enemy_name = resolve_unit_name(cb, *enemy);
+            *attacker_name = resolve_unit_name(cb, *attacker);
+        }
+        GameEvent::WeaponFired { unit, unit_name, .. } |
+        GameEvent::CommandFinished { unit, unit_name, .. } => {
+            *unit_name = resolve_unit_name(cb, *unit);
+        }
+        _ => {}
     }
 }

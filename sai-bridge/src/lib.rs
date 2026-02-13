@@ -10,7 +10,7 @@ pub mod events;
 pub mod ipc;
 
 use callbacks::{EngineCallbacks, SSkirmishAICallback};
-use events::{parse_event, GameEvent, EVENT_INIT, EVENT_UPDATE};
+use events::{enrich_event, parse_event, GameEvent, EVENT_INIT, EVENT_UPDATE};
 use ipc::IpcClient;
 use std::ffi::{c_int, c_void};
 use std::sync::Mutex;
@@ -197,8 +197,9 @@ pub unsafe extern "C" fn handleEvent(
         }
     }
 
-    // Parse and forward the event
-    if let Some(event) = unsafe { parse_event(topic, data) } {
+    // Parse, enrich with unit names, and forward the event
+    if let Some(mut event) = unsafe { parse_event(topic, data) } {
+        enrich_event(&mut event, &instance.callbacks);
         if let Some(ref mut ipc) = instance.ipc {
             if let Err(e) = ipc.send_event(&event) {
                 instance

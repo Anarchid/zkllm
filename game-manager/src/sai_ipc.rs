@@ -22,17 +22,40 @@ pub enum SaiEvent {
     #[serde(rename = "message")]
     Message { player: i32, text: String },
     #[serde(rename = "unit_created")]
-    UnitCreated { unit: i32, builder: i32 },
+    UnitCreated {
+        unit: i32,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        unit_name: Option<String>,
+        builder: i32,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        builder_name: Option<String>,
+    },
     #[serde(rename = "unit_finished")]
-    UnitFinished { unit: i32 },
+    UnitFinished {
+        unit: i32,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        unit_name: Option<String>,
+    },
     #[serde(rename = "unit_idle")]
-    UnitIdle { unit: i32 },
+    UnitIdle {
+        unit: i32,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        unit_name: Option<String>,
+    },
     #[serde(rename = "unit_move_failed")]
-    UnitMoveFailed { unit: i32 },
+    UnitMoveFailed {
+        unit: i32,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        unit_name: Option<String>,
+    },
     #[serde(rename = "unit_damaged")]
     UnitDamaged {
         unit: i32,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        unit_name: Option<String>,
         attacker: i32,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        attacker_name: Option<String>,
         damage: f32,
         weapon_def_id: i32,
         paralyzer: bool,
@@ -40,48 +63,98 @@ pub enum SaiEvent {
     #[serde(rename = "unit_destroyed")]
     UnitDestroyed {
         unit: i32,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        unit_name: Option<String>,
         attacker: i32,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        attacker_name: Option<String>,
         weapon_def_id: i32,
     },
     #[serde(rename = "unit_given")]
     UnitGiven {
         unit: i32,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        unit_name: Option<String>,
         old_team: i32,
         new_team: i32,
     },
     #[serde(rename = "unit_captured")]
     UnitCaptured {
         unit: i32,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        unit_name: Option<String>,
         old_team: i32,
         new_team: i32,
     },
     #[serde(rename = "enemy_enter_los")]
-    EnemyEnterLos { enemy: i32 },
+    EnemyEnterLos {
+        enemy: i32,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        enemy_name: Option<String>,
+    },
     #[serde(rename = "enemy_leave_los")]
-    EnemyLeaveLos { enemy: i32 },
+    EnemyLeaveLos {
+        enemy: i32,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        enemy_name: Option<String>,
+    },
     #[serde(rename = "enemy_enter_radar")]
-    EnemyEnterRadar { enemy: i32 },
+    EnemyEnterRadar {
+        enemy: i32,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        enemy_name: Option<String>,
+    },
     #[serde(rename = "enemy_leave_radar")]
-    EnemyLeaveRadar { enemy: i32 },
+    EnemyLeaveRadar {
+        enemy: i32,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        enemy_name: Option<String>,
+    },
     #[serde(rename = "enemy_damaged")]
     EnemyDamaged {
         enemy: i32,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        enemy_name: Option<String>,
         attacker: i32,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        attacker_name: Option<String>,
         damage: f32,
         weapon_def_id: i32,
         paralyzer: bool,
     },
     #[serde(rename = "enemy_destroyed")]
-    EnemyDestroyed { enemy: i32, attacker: i32 },
+    EnemyDestroyed {
+        enemy: i32,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        enemy_name: Option<String>,
+        attacker: i32,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        attacker_name: Option<String>,
+    },
     #[serde(rename = "enemy_created")]
-    EnemyCreated { enemy: i32 },
+    EnemyCreated {
+        enemy: i32,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        enemy_name: Option<String>,
+    },
     #[serde(rename = "enemy_finished")]
-    EnemyFinished { enemy: i32 },
+    EnemyFinished {
+        enemy: i32,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        enemy_name: Option<String>,
+    },
     #[serde(rename = "weapon_fired")]
-    WeaponFired { unit: i32, weapon_def_id: i32 },
+    WeaponFired {
+        unit: i32,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        unit_name: Option<String>,
+        weapon_def_id: i32,
+    },
     #[serde(rename = "command_finished")]
     CommandFinished {
         unit: i32,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        unit_name: Option<String>,
         command_id: i32,
         command_topic: i32,
     },

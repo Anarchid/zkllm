@@ -34,6 +34,9 @@ const IDX_ECONOMY_GET_CURRENT: usize = 74;
 const IDX_ECONOMY_GET_INCOME: usize = 75;
 const IDX_ECONOMY_GET_USAGE: usize = 76;
 const IDX_ECONOMY_GET_STORAGE: usize = 77;
+const IDX_UNIT_DEF_GET_NAME: usize = 91;
+const IDX_UNIT_DEF_GET_HUMAN_NAME: usize = 92;
+const IDX_UNIT_GET_DEF: usize = 293;
 const IDX_MAP_GET_WIDTH: usize = 394;
 const IDX_MAP_GET_HEIGHT: usize = 395;
 
@@ -104,6 +107,40 @@ impl EngineCallbacks {
     pub fn economy_storage(&self, resource_id: i32) -> f32 {
         type Fn = unsafe extern "C" fn(c_int, c_int) -> c_float;
         unsafe { self.fn_at::<Fn>(IDX_ECONOMY_GET_STORAGE)(self.ai_id, resource_id) }
+    }
+
+    // ── Unit queries ──
+
+    /// Get the unit definition ID for a given unit instance.
+    pub fn unit_get_def(&self, unit_id: i32) -> i32 {
+        type Fn = unsafe extern "C" fn(c_int, c_int) -> c_int;
+        unsafe { self.fn_at::<Fn>(IDX_UNIT_GET_DEF)(self.ai_id, unit_id) }
+    }
+
+    /// Get the internal name of a unit definition (e.g. "cloakraid", "armcom1").
+    pub fn unit_def_get_name(&self, unit_def_id: i32) -> Option<String> {
+        type Fn = unsafe extern "C" fn(c_int, c_int) -> *const c_char;
+        unsafe {
+            let ptr = self.fn_at::<Fn>(IDX_UNIT_DEF_GET_NAME)(self.ai_id, unit_def_id);
+            if ptr.is_null() {
+                None
+            } else {
+                Some(CStr::from_ptr(ptr).to_string_lossy().into_owned())
+            }
+        }
+    }
+
+    /// Get the human-readable name of a unit definition (e.g. "Glaive", "Commander").
+    pub fn unit_def_get_human_name(&self, unit_def_id: i32) -> Option<String> {
+        type Fn = unsafe extern "C" fn(c_int, c_int) -> *const c_char;
+        unsafe {
+            let ptr = self.fn_at::<Fn>(IDX_UNIT_DEF_GET_HUMAN_NAME)(self.ai_id, unit_def_id);
+            if ptr.is_null() {
+                None
+            } else {
+                Some(CStr::from_ptr(ptr).to_string_lossy().into_owned())
+            }
+        }
     }
 
     // ── Map ──
