@@ -36,7 +36,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 import { WakeModule } from './wake-module.js';
 
 const config = {
-  provider: (process.env.PROVIDER || 'anthropic') as 'anthropic' | 'groq',
+  provider: (process.env.PROVIDER || 'anthropic') as 'anthropic' | 'haiku' | 'groq',
   gmBin: process.env.GAME_MANAGER_BIN || resolve(__dirname, '../../game-manager/target/release/game-manager'),
   writeDir: process.env.WRITE_DIR || resolve(homedir(), '.spring-loom'),
   map: process.env.MAP || 'Fairyland v1.0',
@@ -51,6 +51,13 @@ const providerConfigs = {
   anthropic: {
     envKey: 'ANTHROPIC_API_KEY',
     model: 'claude-sonnet-4-5-20250929',
+    createAdapter: (): ProviderAdapter =>
+      new AnthropicAdapter({ apiKey: process.env.ANTHROPIC_API_KEY! }),
+    formatter: undefined as PrefillFormatter | undefined,
+  },
+  haiku: {
+    envKey: 'ANTHROPIC_API_KEY',
+    model: 'claude-haiku-4-5-20251001',
     createAdapter: (): ProviderAdapter =>
       new AnthropicAdapter({ apiKey: process.env.ANTHROPIC_API_KEY! }),
     formatter: undefined as PrefillFormatter | undefined,

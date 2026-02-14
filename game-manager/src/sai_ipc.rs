@@ -195,8 +195,10 @@ pub enum SaiCommand {
     Move {
         unit_id: i32,
         x: f32,
+        #[serde(default)]
         y: f32,
         z: f32,
+        #[serde(default)]
         queue: bool,
     },
     #[serde(rename = "stop")]
@@ -205,6 +207,7 @@ pub enum SaiCommand {
     Attack {
         unit_id: i32,
         target_id: i32,
+        #[serde(default)]
         queue: bool,
     },
     #[serde(rename = "build")]
@@ -229,28 +232,34 @@ pub enum SaiCommand {
     Patrol {
         unit_id: i32,
         x: f32,
+        #[serde(default)]
         y: f32,
         z: f32,
+        #[serde(default)]
         queue: bool,
     },
     #[serde(rename = "fight")]
     Fight {
         unit_id: i32,
         x: f32,
+        #[serde(default)]
         y: f32,
         z: f32,
+        #[serde(default)]
         queue: bool,
     },
     #[serde(rename = "guard")]
     Guard {
         unit_id: i32,
         guard_id: i32,
+        #[serde(default)]
         queue: bool,
     },
     #[serde(rename = "repair")]
     Repair {
         unit_id: i32,
         repair_id: i32,
+        #[serde(default)]
         queue: bool,
     },
     #[serde(rename = "set_fire_state")]
