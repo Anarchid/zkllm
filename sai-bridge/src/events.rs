@@ -177,13 +177,32 @@ pub struct SEnemyFinishedEvent {
     pub enemy: c_int,
 }
 
+// ── Metal spot data (from GameRulesParams) ──
+
+#[derive(Debug, Serialize)]
+pub struct MetalSpot {
+    pub x: f32,
+    pub y: f32,
+    pub z: f32,
+    pub metal: f32,
+}
+
 // ── Serializable game event (sent over IPC to GameManager) ──
 
 #[derive(Debug, Serialize)]
 #[serde(tag = "type")]
 pub enum GameEvent {
     #[serde(rename = "init")]
-    Init { frame: i32, saved_game: bool },
+    Init {
+        frame: i32,
+        saved_game: bool,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        metal_spots: Option<Vec<MetalSpot>>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        map_width: Option<i32>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        map_height: Option<i32>,
+    },
 
     #[serde(rename = "release")]
     Release { reason: i32 },
@@ -367,6 +386,9 @@ pub unsafe fn parse_event(topic: c_int, data: *const c_void) -> Option<GameEvent
             Some(GameEvent::Init {
                 frame: 0,
                 saved_game: e.saved_game,
+                metal_spots: None,
+                map_width: None,
+                map_height: None,
             })
         }
         EVENT_RELEASE => {

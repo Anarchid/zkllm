@@ -166,6 +166,49 @@ pub fn lobby_tools() -> serde_json::Value {
                     },
                     "required": ["map"]
                 }
+            },
+            {
+                "name": "lobby_open_battle",
+                "description": "Host a new custom battle room on the lobby server. You must be connected and logged in. After opening, add bots with lobby_add_bot, then start with lobby_start_battle.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "title": { "type": "string", "description": "Battle room title" },
+                        "map": { "type": "string", "description": "Map name" },
+                        "max_players": { "type": "integer", "default": 2, "description": "Maximum players" },
+                        "password": { "type": "string", "default": "", "description": "Battle password (empty for public)" }
+                    },
+                    "required": ["title", "map"]
+                }
+            },
+            {
+                "name": "lobby_add_bot",
+                "description": "Add an AI bot to the current battle room",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "ai_lib": { "type": "string", "description": "AI shortname (e.g. 'NullAI', 'CircuitAINovice')" },
+                        "name": { "type": "string", "default": "Bot1", "description": "Bot display name" },
+                        "ally_number": { "type": "integer", "default": 1, "description": "Team/ally number (0-based)" }
+                    },
+                    "required": ["ai_lib"]
+                }
+            },
+            {
+                "name": "lobby_remove_bot",
+                "description": "Remove a bot from the current battle room",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "name": { "type": "string", "description": "Bot name to remove" }
+                    },
+                    "required": ["name"]
+                }
+            },
+            {
+                "name": "lobby_start_battle",
+                "description": "Start the game in the current battle room. All participants will receive connection details.",
+                "inputSchema": { "type": "object" }
             }
         ]
     })

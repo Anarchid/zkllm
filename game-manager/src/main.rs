@@ -67,6 +67,10 @@ impl GameManager {
             "lobby_matchmaker_accept" => self.tool_lobby_matchmaker_accept(args).await,
             "lobby_matchmaker_status" => self.tool_lobby_matchmaker_status().await,
             "lobby_start_game" => self.tool_lobby_start_game(args).await,
+            "lobby_open_battle" => self.tool_lobby_open_battle(args).await,
+            "lobby_add_bot" => self.tool_lobby_add_bot(args).await,
+            "lobby_remove_bot" => self.tool_lobby_remove_bot(args).await,
+            "lobby_start_battle" => self.tool_lobby_start_battle().await,
             _ => serde_json::json!({
                 "content": [{"type": "text", "text": format!("Unknown tool: {}", name)}],
                 "isError": true
@@ -94,16 +98,20 @@ impl GameManager {
             .get("address")
             .and_then(|a| a.get("opponent"))
             .and_then(|v| v.as_str());
-        let headless = params
-            .get("address")
-            .and_then(|a| a.get("headless"))
-            .and_then(|v| v.as_bool())
-            .unwrap_or(true);
         let player_mode = params
             .get("address")
             .and_then(|a| a.get("player_mode"))
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
+        let headless = if player_mode {
+            false
+        } else {
+            params
+                .get("address")
+                .and_then(|a| a.get("headless"))
+                .and_then(|v| v.as_bool())
+                .unwrap_or(true)
+        };
 
         match self.engines.start_local_game(map, game, opponent, headless, player_mode, &self.agent_name).await {
             Ok(channel_id) => {
@@ -231,10 +239,17 @@ impl GameManager {
             .and_then(|c| c.as_array())
             .and_then(|arr| arr.first())
             .and_then(|block| block.get("text"))
-            .and_then(|v| v.as_str())
-            .unwrap_or("");
+            .map(|v| {
+                if let Some(s) = v.as_str() {
+                    s.to_string()
+                } else {
+                    // Agent sent JSON object instead of string — stringify it
+                    v.to_string()
+                }
+            })
+            .unwrap_or_default();
 
-        let cmd = match sai_ipc::parse_publish_command(content) {
+        let cmd = match sai_ipc::parse_publish_command(&content) {
             Ok(c) => c,
             Err(e) => {
                 return serde_json::json!({
@@ -861,11 +876,16 @@ impl GameManager {
                     self.lobby_state.my_battle = Some(resp.battle_id);
                     let player_count = resp.players.len();
                     let bot_count = resp.bots.len();
+
+                    // Report sync status
+                    self.send_battle_sync().await;
+
                     serde_json::json!({
                         "content": [{"type": "text", "text": format!("Joined battle {} ({} players, {} bots)", resp.battle_id, player_count, bot_count)}]
                     })
                 } else {
                     self.lobby_state.my_battle = Some(battle_id);
+                    self.send_battle_sync().await;
                     serde_json::json!({
                         "content": [{"type": "text", "text": format!("Joined battle {}", battle_id)}]
                     })
@@ -1079,6 +1099,241 @@ impl GameManager {
         }
     }
 
+    /// Tell the lobby server we have the map/game/engine files.
+    async fn send_battle_sync(&mut self) {
+        let username = self.lobby_state.my_username.clone().unwrap_or_default();
+        let cmd = UpdateUserBattleStatusCommand {
+            name: username,
+            is_spectator: Some(false),
+            sync: Some("Synced".into()),
+            ally_number: Some(0),
+        };
+        if let Some(conn) = &mut self.lobby_conn {
+            if let Err(e) = conn.send_command("UpdateUserBattleStatus", &cmd).await {
+                tracing::warn!("Failed to send sync status: {}", e);
+            }
+        }
+    }
+
+    // ── Battle hosting tool implementations ──
+
+    async fn tool_lobby_open_battle(
+        &mut self,
+        args: &serde_json::Value,
+    ) -> serde_json::Value {
+        let title = match args.get("title").and_then(|v| v.as_str()) {
+            Some(t) => t.to_string(),
+            None => {
+                return serde_json::json!({
+                    "content": [{"type": "text", "text": "Missing title"}],
+                    "isError": true
+                })
+            }
+        };
+        let map = match args.get("map").and_then(|v| v.as_str()) {
+            Some(m) => m.to_string(),
+            None => {
+                return serde_json::json!({
+                    "content": [{"type": "text", "text": "Missing map"}],
+                    "isError": true
+                })
+            }
+        };
+        let max_players = args
+            .get("max_players")
+            .and_then(|v| v.as_i64())
+            .unwrap_or(2) as i32;
+        let password = args
+            .get("password")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+
+        if !self.lobby_state.logged_in {
+            return serde_json::json!({
+                "content": [{"type": "text", "text": "Not logged in"}],
+                "isError": true
+            });
+        }
+
+        let cmd = OpenBattleCommand {
+            header: BattleHeader {
+                battle_id: 0,
+                title: title.clone(),
+                founder: self.lobby_state.my_username.clone().unwrap_or_default(),
+                map: map.clone(),
+                game: self.lobby_state.server_game.clone(),
+                engine: self.lobby_state.server_engine.clone(),
+                max_players,
+                player_count: 0,
+                spectator_count: 0,
+                is_running: false,
+                is_password_protected: !password.is_empty(),
+                mode: None,
+            },
+        };
+
+        if let Some(conn) = &mut self.lobby_conn {
+            if let Err(e) = conn.send_command("OpenBattle", &cmd).await {
+                return serde_json::json!({
+                    "content": [{"type": "text", "text": format!("Failed to send OpenBattle: {}", e)}],
+                    "isError": true
+                });
+            }
+        }
+
+        // The server responds with JoinBattleSuccess (founder auto-joins)
+        match self.await_lobby_response("JoinBattleSuccess", 10).await {
+            Ok(data) => {
+                if let Ok(resp) = serde_json::from_value::<JoinBattleSuccessData>(data) {
+                    self.lobby_state.my_battle = Some(resp.battle_id);
+
+                    // Report sync status — tell the server we have the map/game/engine
+                    self.send_battle_sync().await;
+
+                    serde_json::json!({
+                        "content": [{"type": "text", "text": format!(
+                            "Opened battle '{}' on {} (battle_id: {}). Add bots with lobby_add_bot, then start with lobby_start_battle.",
+                            title, map, resp.battle_id
+                        )}]
+                    })
+                } else {
+                    serde_json::json!({
+                        "content": [{"type": "text", "text": "Opened battle but could not parse response"}]
+                    })
+                }
+            }
+            Err(e) => serde_json::json!({
+                "content": [{"type": "text", "text": format!("Failed to open battle: {}", e)}],
+                "isError": true
+            }),
+        }
+    }
+
+    async fn tool_lobby_add_bot(
+        &mut self,
+        args: &serde_json::Value,
+    ) -> serde_json::Value {
+        let ai_lib = match args.get("ai_lib").and_then(|v| v.as_str()) {
+            Some(a) => a.to_string(),
+            None => {
+                return serde_json::json!({
+                    "content": [{"type": "text", "text": "Missing ai_lib"}],
+                    "isError": true
+                })
+            }
+        };
+        let name = args
+            .get("name")
+            .and_then(|v| v.as_str())
+            .unwrap_or("Bot1")
+            .to_string();
+        let ally_number = args
+            .get("ally_number")
+            .and_then(|v| v.as_i64())
+            .unwrap_or(1) as i32;
+
+        if self.lobby_state.my_battle.is_none() {
+            return serde_json::json!({
+                "content": [{"type": "text", "text": "Not in a battle"}],
+                "isError": true
+            });
+        }
+
+        let cmd = UpdateBotStatusCommand {
+            name: name.clone(),
+            ai_lib: ai_lib.clone(),
+            ally_number,
+            owner: self.lobby_state.my_username.clone().unwrap_or_default(),
+        };
+
+        if let Some(conn) = &mut self.lobby_conn {
+            match conn.send_command("UpdateBotStatus", &cmd).await {
+                Ok(()) => serde_json::json!({
+                    "content": [{"type": "text", "text": format!("Added bot '{}' (AI: {}, ally: {})", name, ai_lib, ally_number)}]
+                }),
+                Err(e) => serde_json::json!({
+                    "content": [{"type": "text", "text": format!("Failed: {}", e)}],
+                    "isError": true
+                }),
+            }
+        } else {
+            serde_json::json!({
+                "content": [{"type": "text", "text": "Not connected"}],
+                "isError": true
+            })
+        }
+    }
+
+    async fn tool_lobby_remove_bot(
+        &mut self,
+        args: &serde_json::Value,
+    ) -> serde_json::Value {
+        let name = match args.get("name").and_then(|v| v.as_str()) {
+            Some(n) => n.to_string(),
+            None => {
+                return serde_json::json!({
+                    "content": [{"type": "text", "text": "Missing bot name"}],
+                    "isError": true
+                })
+            }
+        };
+
+        let cmd = RemoveBotCommand { name: name.clone() };
+
+        if let Some(conn) = &mut self.lobby_conn {
+            match conn.send_command("RemoveBot", &cmd).await {
+                Ok(()) => serde_json::json!({
+                    "content": [{"type": "text", "text": format!("Removed bot '{}'", name)}]
+                }),
+                Err(e) => serde_json::json!({
+                    "content": [{"type": "text", "text": format!("Failed: {}", e)}],
+                    "isError": true
+                }),
+            }
+        } else {
+            serde_json::json!({
+                "content": [{"type": "text", "text": "Not connected"}],
+                "isError": true
+            })
+        }
+    }
+
+    async fn tool_lobby_start_battle(&mut self) -> serde_json::Value {
+        if self.lobby_state.my_battle.is_none() {
+            return serde_json::json!({
+                "content": [{"type": "text", "text": "Not in a battle"}],
+                "isError": true
+            });
+        }
+
+        // ZK custom battles are started by sending !start in battle chat.
+        // The ZKLS autohost processes it and spins up a dedicated game server.
+        let cmd = SayCommand {
+            place: PLACE_BATTLE,
+            target: String::new(),
+            text: "!start".into(),
+            is_emote: false,
+        };
+
+        if let Some(conn) = &mut self.lobby_conn {
+            if let Err(e) = conn.send_command("Say", &cmd).await {
+                return serde_json::json!({
+                    "content": [{"type": "text", "text": format!("Failed to send !start: {}", e)}],
+                    "isError": true
+                });
+            }
+        }
+
+        // Return immediately — the background event loop will receive ConnectSpring
+        // and call handle_connect_spring() to launch the engine. The agent will get
+        // a lobby.connect_spring push event when that happens.
+        tracing::info!("Sent !start to battle chat, waiting for ConnectSpring from background loop");
+        serde_json::json!({
+            "content": [{"type": "text", "text": "Sent !start — waiting for game server to launch. You'll receive a lobby.connect_spring event when the engine connects."}]
+        })
+    }
+
     // ── Game tool implementations ──
 
     async fn tool_lobby_start_game(
@@ -1102,14 +1357,15 @@ impl GameManager {
             .get("game")
             .and_then(|v| v.as_str())
             .unwrap_or("Zero-K $VERSION");
-        let headless = args
-            .get("headless")
-            .and_then(|v| v.as_bool())
-            .unwrap_or(true);
         let player_mode = args
             .get("player_mode")
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
+        let headless = if player_mode {
+            false // player mode needs LuaUI for bootstrap widget
+        } else {
+            args.get("headless").and_then(|v| v.as_bool()).unwrap_or(true)
+        };
 
         match self
             .engines
@@ -1184,9 +1440,19 @@ impl GameManager {
             tracing::warn!("Failed to whitelist player '{}': {}", player_name, e);
         }
 
+        // Warm archive cache for the server's engine version if needed
+        if !data.engine.is_empty() {
+            if let Ok(mp_engine_dir) = engine::find_engine_dir(&self.spring_home, Some(&data.engine)) {
+                let _ = chmod_executable(&mp_engine_dir);
+                if mp_engine_dir != self.engines.engine_dir {
+                    warm_archive_cache(&self.write_dir, &mp_engine_dir).await;
+                }
+            }
+        }
+
         match self
             .engines
-            .start_multiplayer_game(data, &player_name)
+            .start_multiplayer_game(data, &player_name, &self.spring_home)
             .await
         {
             Ok(channel_id) => {
@@ -1306,27 +1572,22 @@ impl GameManager {
                 place,
                 ..
             } => {
-                let place_name = match *place {
-                    0 => "channel",
-                    1 => "battle",
-                    4 => "dm",
-                    _ => "other",
-                };
-                (
-                    "lobby.chat".to_string(),
-                    format!("[{}] [{}] {}: {}", place_name, target, user, text),
-                )
+                // Only forward battle chat and DMs — skip channel chatter
+                match *place {
+                    1 => (
+                        "lobby.chat".to_string(),
+                        format!("[battle] {}: {}", user, text),
+                    ),
+                    4 => (
+                        "lobby.chat".to_string(),
+                        format!("[dm] {}: {}", user, text),
+                    ),
+                    _ => return Ok(()), // skip channel chat, server messages, etc.
+                }
             }
-            LobbyEvent::BattleOpened(b) => (
-                "lobby.battle_opened".to_string(),
-                format!(
-                    "Battle opened: {} by {} on {} ({}/{})",
-                    b.title, b.founder, b.map, b.player_count, b.max_players
-                ),
-            ),
-            LobbyEvent::BattleClosed { battle_id } => (
-                "lobby.battle_closed".to_string(),
-                format!("Battle {} closed", battle_id),
+            LobbyEvent::BattleJoined { battle_id, player_count, bot_count } => (
+                "lobby.battle_joined".to_string(),
+                format!("Joined battle {} ({} players, {} bots)", battle_id, player_count, bot_count),
             ),
             LobbyEvent::ChannelJoined {
                 channel,
@@ -1341,29 +1602,6 @@ impl GameManager {
                     topic.as_deref().unwrap_or("(none)")
                 ),
             ),
-            LobbyEvent::MatchMakerSetup { queues } => {
-                let names: Vec<&str> = queues.iter().map(|q| q.name.as_str()).collect();
-                (
-                    "lobby.matchmaker_setup".to_string(),
-                    format!("Matchmaker queues available: {}", names.join(", ")),
-                )
-            }
-            LobbyEvent::MatchMakerStatus(status) => {
-                let joined = status.joined_queues.join(", ");
-                let counts: Vec<String> = status
-                    .queue_counts
-                    .iter()
-                    .map(|(k, v)| format!("{}: {}", k, v))
-                    .collect();
-                (
-                    "lobby.matchmaker_status".to_string(),
-                    format!(
-                        "Matchmaker status — Joined: [{}], Counts: [{}]",
-                        joined,
-                        counts.join(", ")
-                    ),
-                )
-            }
             LobbyEvent::MatchMakerReady {
                 seconds_remaining,
                 quick_play,
@@ -1372,16 +1610,6 @@ impl GameManager {
                 format!(
                     "MATCH FOUND! Accept within {}s (quickplay: {}). Use lobby_matchmaker_accept to respond.",
                     seconds_remaining, quick_play
-                ),
-            ),
-            LobbyEvent::MatchMakerReadyUpdate(update) => (
-                "lobby.matchmaker_ready_update".to_string(),
-                format!(
-                    "Ready-check update: accepted={}, likely_to_play={}, battle_size={:?}, battle_ready={:?}",
-                    update.ready_accepted,
-                    update.likely_to_play,
-                    update.your_battle_size,
-                    update.your_battle_ready
                 ),
             ),
             LobbyEvent::MatchMakerResult {
@@ -1401,12 +1629,17 @@ impl GameManager {
                 "lobby.connect_spring".to_string(),
                 "Game starting — engine launch initiated".to_string(),
             ),
-            // Skip high-frequency events
+            // Skip high-frequency events that would flood the agent's context
             LobbyEvent::UserJoined(_)
             | LobbyEvent::UserLeft { .. }
             | LobbyEvent::BattleUpdated(_)
+            | LobbyEvent::BattleOpened(_)
+            | LobbyEvent::BattleClosed { .. }
             | LobbyEvent::ChannelUserJoined { .. }
-            | LobbyEvent::ChannelUserLeft { .. } => {
+            | LobbyEvent::ChannelUserLeft { .. }
+            | LobbyEvent::MatchMakerStatus(_)
+            | LobbyEvent::MatchMakerSetup { .. }
+            | LobbyEvent::MatchMakerReadyUpdate(_) => {
                 return Ok(());
             }
         };
@@ -1439,6 +1672,50 @@ fn cli_arg(name: &str) -> Option<String> {
         .and_then(|i| args.get(i + 1).cloned())
 }
 
+/// Ensure engine binaries in a directory are executable.
+fn chmod_executable(engine_dir: &std::path::Path) -> std::io::Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+    for name in &["spring", "spring-headless"] {
+        let bin = engine_dir.join(name);
+        if bin.exists() {
+            let meta = std::fs::metadata(&bin)?;
+            let mut perms = meta.permissions();
+            perms.set_mode(perms.mode() | 0o111);
+            std::fs::set_permissions(&bin, perms)?;
+        }
+    }
+    Ok(())
+}
+
+/// Run the engine briefly to populate the archive cache in the write-dir.
+async fn warm_archive_cache(write_dir: &std::path::Path, engine_dir: &std::path::Path) {
+    let headless = engine::resolve_engine_binary(engine_dir, true);
+    if !headless.exists() {
+        tracing::warn!("Cannot warm cache: {} not found", headless.display());
+        return;
+    }
+
+    tracing::info!("Warming archive cache with {}...", engine_dir.display());
+    let dummy_script = write_dir.join("temp/cache_warm.txt");
+    let _ = tokio::fs::write(&dummy_script, "[GAME]\n{\n}\n").await;
+
+    let result = tokio::process::Command::new(&headless)
+        .arg("--write-dir")
+        .arg(write_dir)
+        .arg(&dummy_script)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .await;
+
+    let _ = tokio::fs::remove_file(&dummy_script).await;
+
+    match result {
+        Ok(status) => tracing::info!("Cache warm-up done (exit: {})", status),
+        Err(e) => tracing::warn!("Cache warm-up failed: {}", e),
+    }
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     // Tracing always goes to stderr — safe for stdio mode
@@ -1466,6 +1743,23 @@ async fn main() -> anyhow::Result<()> {
     let engine_version = cli_arg("--engine-version");
     let engine_dir = engine::find_engine_dir(&wdc.spring_home, engine_version.as_deref())?;
     tracing::info!("Using engine at {}", engine_dir.display());
+
+    // Warm archive cache: --warm-engine <version> to target a specific engine, then exit
+    if let Some(warm_ver) = cli_arg("--warm-engine") {
+        let warm_dir = engine::find_engine_dir(&wdc.spring_home, Some(&warm_ver))?;
+        // Make sure the binary is executable
+        let _ = chmod_executable(&warm_dir);
+        warm_archive_cache(&wdc.write_dir, &warm_dir).await;
+        tracing::info!("Cache warmed for engine {}. Exiting.", warm_ver);
+        return Ok(());
+    }
+
+    // Auto-warm with the default engine on startup (skip with --no-cache-warm)
+    if !std::env::args().any(|a| a == "--no-cache-warm") {
+        warm_archive_cache(&wdc.write_dir, &engine_dir).await;
+    }
+    // Note: multiplayer games may use a different engine — handle_connect_spring
+    // warms the cache for that engine before launching.
 
     let socket_dir = std::env::var("SOCKET_DIR").unwrap_or_else(|_| "/tmp".into());
 
@@ -1522,10 +1816,12 @@ async fn main() -> anyhow::Result<()> {
                             continue;
                         }
 
+                        tracing::info!("Lobby msg: {} {}", msg.command, msg.data);
                         let events = gm.lobby_state.handle_message(&msg);
                         for event in &events {
                             // Handle ConnectSpring by launching the engine
                             if let LobbyEvent::ConnectSpring(data) = event {
+                                tracing::info!("Background loop received ConnectSpring — launching engine");
                                 gm.handle_connect_spring(data).await;
                             }
                             if let Err(e) = gm.push_lobby_event(event).await {

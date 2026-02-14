@@ -418,18 +418,27 @@ impl EngineManager {
         &mut self,
         data: &ConnectSpringData,
         player_name: &str,
+        spring_home: &Path,
     ) -> Result<String, String> {
         let id = self.next_id;
         self.next_id += 1;
         let channel_id = format!("game:mp-{}", id);
         let socket_path = format!("{}/sai_mp_{}.sock", self.socket_dir, id);
 
+        // Use the engine version from the server, not the default
+        let engine_dir = if !data.engine.is_empty() {
+            find_engine_dir(spring_home, Some(&data.engine))
+                .map_err(|e| format!("Engine '{}' not found: {}", data.engine, e))?
+        } else {
+            self.engine_dir.clone()
+        };
+
         let config = GameConfig {
             map: data.map.clone(),
             game: data.game.clone(),
-            engine_dir: self.engine_dir.clone(),
+            engine_dir,
             write_dir: self.write_dir.clone(),
-            headless: true,
+            headless: false, // multiplayer player mode needs LuaUI for bootstrap widget
             socket_path,
             agent_ai: "AgentBridge".to_string(),
             agent_team: 0,

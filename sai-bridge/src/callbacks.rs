@@ -164,6 +164,31 @@ impl EngineCallbacks {
         }
     }
 
+    // ── GameRulesParams ──
+
+    pub fn game_rules_param_float(&self, name: &str, default: f32) -> f32 {
+        let c_name = CString::new(name).ok().unwrap();
+        call!(self, Game_getRulesParamFloat, self.ai_id, c_name.as_ptr(), default)
+    }
+
+    /// Query ZK metal spot positions from GameRulesParams.
+    /// Returns vec of (x, y, z, metal) tuples.
+    pub fn get_metal_spots(&self) -> Vec<(f32, f32, f32, f32)> {
+        let count = self.game_rules_param_float("mex_count", 0.0) as i32;
+        if count <= 0 {
+            return Vec::new();
+        }
+        let mut spots = Vec::with_capacity(count as usize);
+        for i in 1..=count {
+            let x = self.game_rules_param_float(&format!("mex_x{}", i), 0.0);
+            let y = self.game_rules_param_float(&format!("mex_y{}", i), 0.0);
+            let z = self.game_rules_param_float(&format!("mex_z{}", i), 0.0);
+            let metal = self.game_rules_param_float(&format!("mex_metal{}", i), 0.0);
+            spots.push((x, y, z, metal));
+        }
+        spots
+    }
+
     // ── Logging ──
 
     pub fn log(&self, msg: &str) {

@@ -9,12 +9,29 @@ use std::collections::HashMap;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixStream;
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MetalSpot {
+    pub x: f32,
+    pub y: f32,
+    pub z: f32,
+    pub metal: f32,
+}
+
 /// An event received from a SAI bridge instance.
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "type")]
 pub enum SaiEvent {
     #[serde(rename = "init")]
-    Init { frame: i32, saved_game: bool },
+    Init {
+        frame: i32,
+        saved_game: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        metal_spots: Option<Vec<MetalSpot>>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        map_width: Option<i32>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        map_height: Option<i32>,
+    },
     #[serde(rename = "release")]
     Release { reason: i32 },
     #[serde(rename = "update")]
@@ -191,10 +208,15 @@ pub enum SaiCommand {
         build_def_id: i32,
         #[serde(default)]
         build_def_name: Option<String>,
+        #[serde(default)]
         x: f32,
+        #[serde(default)]
         y: f32,
+        #[serde(default)]
         z: f32,
+        #[serde(default)]
         facing: i32,
+        #[serde(default)]
         queue: bool,
     },
     #[serde(rename = "patrol")]

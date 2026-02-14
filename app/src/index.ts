@@ -1,8 +1,8 @@
 /**
  * Zero-K Agent — Gameplay App
  *
- * Spawns the GameManager as a subprocess, starts a local game,
- * and plays using a pause/think/execute loop.
+ * Spawns the GameManager as a subprocess, starts a game,
+ * and plays using a think/act/sleep loop.
  *
  * Usage:
  *   npm install
@@ -10,13 +10,16 @@
  *
  * Required environment variables (see .env.example):
  *   ANTHROPIC_API_KEY  - Anthropic API key
- *   GAME_MANAGER_BIN   - Path to game-manager binary
  *
  * Optional:
- *   WRITE_DIR   - Agent write directory (default: ~/.spring-loom)
- *   MAP         - Map name (default: Comet Catcher Redux v3.1)
- *   OPPONENT    - Opponent AI (default: NullAI)
- *   STORE_PATH  - Chronicle store path (default: ./data/store)
+ *   GAME_MANAGER_BIN  - Path to game-manager binary
+ *   WRITE_DIR         - Agent write directory (default: ~/.spring-loom)
+ *   MAP               - Map name (default: Comet Catcher Redux v3.1)
+ *   OPPONENT          - Opponent AI (default: NullAI)
+ *   STORE_PATH        - Chronicle store path (default: ./data/store)
+ *   PLAY_MODE         - "local" or "lobby" (default: local)
+ *   ZK_USERNAME       - Zero-K lobby username (required for lobby mode)
+ *   ZK_PASSWORD       - Zero-K lobby password (required for lobby mode)
  */
 
 import 'dotenv/config';
@@ -33,14 +36,20 @@ const config = {
   anthropic: {
     apiKey: process.env.ANTHROPIC_API_KEY!,
   },
-  gmBin: process.env.GAME_MANAGER_BIN || resolve(__dirname, '../../game-manager/target/debug/game-manager'),
+  gmBin: process.env.GAME_MANAGER_BIN || resolve(__dirname, '../../game-manager/target/release/game-manager'),
   writeDir: process.env.WRITE_DIR || resolve(homedir(), '.spring-loom'),
-  map: process.env.MAP || 'Comet Catcher Redux v3.1',
+  map: process.env.MAP || 'Fairyland v1.0',
   opponent: process.env.OPPONENT || 'NullAI',
   storePath: process.env.STORE_PATH || './data/store',
+  playMode: (process.env.PLAY_MODE || 'local') as 'local' | 'lobby',
+  zkUsername: process.env.ZK_USERNAME || '',
+  zkPassword: process.env.ZK_PASSWORD || '',
 };
 
 const required = ['ANTHROPIC_API_KEY'];
+if (config.playMode === 'lobby') {
+  required.push('ZK_USERNAME', 'ZK_PASSWORD');
+}
 const missing = required.filter((key) => !process.env[key]);
 if (missing.length > 0) {
   console.error('Missing required environment variables:', missing.join(', '));
@@ -62,12 +71,21 @@ The world keeps moving while you think and while you sleep. Be decisive — issu
 
 ## Safety Rules
 
-- **LOCAL GAMES ONLY.** Never use lobby_connect, lobby_login, lobby_register, or any matchmaker/battle tools. You do not have permission to connect to the multiplayer lobby server.
-- Only use \`zk:lobby_start_game\` to start local scrimmages.
+- Never use \`lobby_register\` or matchmaker tools unless explicitly instructed.
+- Follow the kickoff instructions for which play mode to use (local or lobby).
 
 ## Starting the Game
 
-Call \`zk:lobby_start_game\` with \`headless: false\` to start a local game with the game window visible. This creates a game channel. Once the game starts, you'll receive an \`init\` event on that channel — that's your cue to begin playing.
+**Local mode**: Call \`zk:lobby_start_game\` with \`headless: false\` to start a local game.
+
+**Lobby mode** (when instructed):
+1. \`zk:lobby_connect\` — connect to the lobby server
+2. \`zk:lobby_login\` — authenticate with provided credentials
+3. \`zk:lobby_open_battle\` — host a custom battle room with a title and map
+4. \`zk:lobby_add_bot\` — add an AI opponent (e.g. ai_lib: "NullAI")
+5. \`zk:lobby_start_battle\` — start the game
+
+In both modes, a game channel is created. Once the game starts, you'll receive an \`init\` event — that's your cue to begin playing.
 
 ## Game Commands (via zk:channel_publish)
 
@@ -77,7 +95,7 @@ Send commands as JSON text to the game channel. Always include the channelId.
 - \`{"type":"move","unit_id":N,"x":F,"y":F,"z":F,"queue":true}\` — Move unit to position
 - \`{"type":"stop","unit_id":N}\` — Cancel all orders
 - \`{"type":"attack","unit_id":N,"target_id":N,"queue":true}\` — Attack a unit
-- \`{"type":"build","unit_id":N,"build_def_name":"defname","x":F,"y":F,"z":F,"facing":0,"queue":true}\` — Build a unit/structure by def name. Coordinates are auto-snapped to the nearest valid build position, so approximate coordinates (e.g. from metal spot data) are fine.
+- \`{"type":"build","unit_id":N,"build_def_name":"defname","x":F,"y":F,"z":F,"facing":0,"queue":true}\` — Build a unit/structure by def name. Coordinates are auto-snapped to the nearest valid build position, so approximate coordinates (e.g. from metal spot data) are fine. **For factory production** (factory builds a unit), omit x/y/z: \`{"type":"build","unit_id":FACTORY_ID,"build_def_name":"cloakraid","queue":true}\`
 - \`{"type":"patrol","unit_id":N,"x":F,"y":F,"z":F,"queue":true}\` — Patrol to position
 - \`{"type":"fight","unit_id":N,"x":F,"y":F,"z":F,"queue":true}\` — Attack-move toward position
 - \`{"type":"guard","unit_id":N,"guard_id":N,"queue":true}\` — Guard another unit
@@ -197,6 +215,8 @@ Use \`send_chat\` to narrate your thinking in-game. Spectators and opponents can
 \`{"type":"send_chat","text":"Building 3 mexes near base, then a cloakbot factory. Economy first!"}\`
 
 If someone sends you a message, respond with \`send_chat\`. Be sporting.
+
+Note: You can see spectator chat (messages prefixed with \`s:\`). **Do not repeat or quote spectator messages in your own chat** — spectators may be giving private commentary or advice they don't want shared with your opponent.
 `;
 
 async function main() {
@@ -268,10 +288,23 @@ async function main() {
   console.log('Framework started (API on :8765)');
 
   // Kick off the game
+  const kickoff =
+    config.playMode === 'lobby'
+      ? `Play an online game via the Zero-K lobby:
+
+1. Connect: call zk:lobby_connect
+2. Login: call zk:lobby_login with username "${config.zkUsername}" and password "${config.zkPassword}"
+3. Host: call zk:lobby_open_battle with title "Agent Practice" and map "${config.map}"
+4. Add opponent: call zk:lobby_add_bot with ai_lib "${config.opponent}"
+5. Start: call zk:lobby_start_battle
+
+Then set wake conditions for the "unit_finished" event — this is when your commander spawns and you learn its unit ID. When you wake, begin your opening: build staticmex on the nearest metal spots with your commander, then a factorycloak.`
+      : `Start a local game: call zk:lobby_start_game with map "${config.map}", opponent "${config.opponent}", and player_mode: true. Then set wake conditions for the "unit_finished" event — this is when your commander spawns and you learn its unit ID. When you wake, begin your opening: build staticmex on the nearest metal spots with your commander, then a factorycloak.`;
+
   framework.pushEvent({
     type: 'external-message',
     source: 'system',
-    content: `Start a local game: call zk:lobby_start_game with map "${config.map}", opponent "${config.opponent}", and headless: false. Then set wake conditions for the "unit_finished" event — this is when your commander spawns and you learn its unit ID. When you wake, begin your opening: build staticmex on the nearest metal spots with your commander, then a factorycloak.`,
+    content: kickoff,
     metadata: { initial: true },
     triggerInference: true,
   });
@@ -286,10 +319,14 @@ async function main() {
   console.log('\n' + '='.repeat(50));
   console.log('Zero-K gameplay agent running');
   console.log('='.repeat(50));
+  console.log(`Play mode:   ${config.playMode}`);
   console.log(`GameManager: ${config.gmBin}`);
   console.log(`Write dir:   ${config.writeDir}`);
   console.log(`Map:         ${config.map}`);
   console.log(`Opponent:    ${config.opponent}`);
+  if (config.playMode === 'lobby') {
+    console.log(`ZK user:     ${config.zkUsername}`);
+  }
   console.log('Press Ctrl+C to stop.\n');
 }
 

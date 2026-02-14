@@ -130,6 +130,54 @@ pub struct RegisterCommand {
     pub dlc: String,
 }
 
+// Client → Server: open a custom battle room
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "PascalCase")]
+pub struct OpenBattleCommand {
+    pub header: BattleHeader,
+}
+
+// Client → Server: add or update a bot in the current battle
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "PascalCase")]
+pub struct UpdateBotStatusCommand {
+    pub name: String,
+    pub ai_lib: String,
+    #[serde(default)]
+    pub ally_number: i32,
+    pub owner: String,
+}
+
+// Client → Server: remove a bot from the current battle
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "PascalCase")]
+pub struct RemoveBotCommand {
+    pub name: String,
+}
+
+// Client → Server: report battle status (sync, spectator, ally)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "PascalCase")]
+pub struct UpdateUserBattleStatusCommand {
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub is_spectator: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sync: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ally_number: Option<i32>,
+}
+
+// Client → Server: request the server to start the game
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "PascalCase")]
+pub struct RequestConnectSpringCommand {
+    #[serde(rename = "BattleID")]
+    pub battle_id: i64,
+    #[serde(default)]
+    pub password: String,
+}
+
 // ── Server → Client responses ──
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -330,7 +378,7 @@ pub struct ConnectSpringData {
     #[serde(default)]
     pub script_password: String,
     #[serde(default)]
-    pub mode: String,
+    pub mode: serde_json::Value,
     #[serde(default)]
     pub title: String,
     #[serde(default)]

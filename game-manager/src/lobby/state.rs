@@ -77,6 +77,7 @@ pub enum LobbyEvent {
     ChannelJoined { channel: String, users: Vec<String>, topic: Option<String> },
     ChannelUserJoined { channel: String, user: String },
     ChannelUserLeft { channel: String, user: String },
+    BattleJoined { battle_id: i64, player_count: usize, bot_count: usize },
     ConnectSpring(ConnectSpringData),
     // Matchmaker events
     MatchMakerSetup { queues: Vec<QueueInfo> },
@@ -198,6 +199,16 @@ impl LobbyState {
                     });
                 }
             }
+            "JoinBattleSuccess" => {
+                if let Ok(data) = serde_json::from_value::<JoinBattleSuccessData>(msg.data.clone()) {
+                    self.my_battle = Some(data.battle_id);
+                    events.push(LobbyEvent::BattleJoined {
+                        battle_id: data.battle_id,
+                        player_count: data.players.len(),
+                        bot_count: data.bots.len(),
+                    });
+                }
+            }
             "JoinChannelResponse" => {
                 if let Ok(data) = serde_json::from_value::<JoinChannelResponseData>(msg.data.clone()) {
                     if data.success {
@@ -243,8 +254,9 @@ impl LobbyState {
                 }
             }
             "ConnectSpring" => {
-                if let Ok(data) = serde_json::from_value::<ConnectSpringData>(msg.data.clone()) {
-                    events.push(LobbyEvent::ConnectSpring(data));
+                match serde_json::from_value::<ConnectSpringData>(msg.data.clone()) {
+                    Ok(data) => events.push(LobbyEvent::ConnectSpring(data)),
+                    Err(e) => tracing::error!("Failed to parse ConnectSpring: {} — raw: {}", e, msg.data),
                 }
             }
             "MatchMakerSetup" => {

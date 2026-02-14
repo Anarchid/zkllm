@@ -79,19 +79,12 @@ pub unsafe extern "C" fn init(
     // Connect to GameManager
     let socket_path = get_socket_path(&cb);
     let ipc = match IpcClient::connect(&socket_path) {
-        Ok(mut client) => {
+        Ok(client) => {
             cb.log(&format!(
                 "[SAI Bridge] Connected to GameManager at {}",
                 socket_path
             ));
-            // Send init event
-            let init_event = GameEvent::Init {
-                frame: 0,
-                saved_game: false,
-            };
-            if let Err(e) = client.send_event(&init_event) {
-                cb.log(&format!("[SAI Bridge] Failed to send init event: {}", e));
-            }
+            // Don't send init here — wait for handleEvent(EVENT_INIT) which has game data
             Some(client)
         }
         Err(e) => {
@@ -165,10 +158,42 @@ pub unsafe extern "C" fn handleEvent(
         instance.callbacks =
             unsafe { EngineCallbacks::new(skirmish_ai_id, init_data.callback) };
 
+        // Query map data and metal spots from GameRulesParams
+        let map_width = instance.callbacks.map_width();
+        let map_height = instance.callbacks.map_height();
+        instance.callbacks.log(&format!(
+            "[SAI Bridge] EVENT_INIT: map {}x{}", map_width, map_height
+        ));
+
+        let mex_count = instance.callbacks.game_rules_param_float("mex_count", -1.0);
+        instance.callbacks.log(&format!(
+            "[SAI Bridge] mex_count from GameRulesParams = {}", mex_count
+        ));
+
+        let raw_spots = instance.callbacks.get_metal_spots();
+        let metal_spots = if raw_spots.is_empty() {
+            instance.callbacks.log("[SAI Bridge] No metal spots found");
+            None
+        } else {
+            instance.callbacks.log(&format!(
+                "[SAI Bridge] Found {} metal spots from GameRulesParams",
+                raw_spots.len()
+            ));
+            Some(
+                raw_spots
+                    .into_iter()
+                    .map(|(x, y, z, metal)| events::MetalSpot { x, y, z, metal })
+                    .collect(),
+            )
+        };
+
         if let Some(ref mut ipc) = instance.ipc {
             let event = GameEvent::Init {
                 frame: 0,
                 saved_game: init_data.saved_game,
+                metal_spots,
+                map_width: Some(map_width),
+                map_height: Some(map_height),
             };
             let _ = ipc.send_event(&event);
         }
