@@ -47,8 +47,8 @@ impl IpcClient {
         self.write_buf.extend_from_slice(json.as_bytes());
         self.write_buf.push(b'\n');
 
-        // Cap buffer at 256KB — if downstream is that far behind, drop oldest data
-        const MAX_BUF: usize = 256 * 1024;
+        // Cap buffer at 1MB — if downstream is that far behind, drop oldest data
+        const MAX_BUF: usize = 1024 * 1024;
         if self.write_buf.len() > MAX_BUF {
             let drop = self.write_buf.len() - MAX_BUF;
             self.write_buf.drain(..drop);

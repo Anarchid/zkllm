@@ -1754,8 +1754,8 @@ async fn main() -> anyhow::Result<()> {
         return Ok(());
     }
 
-    // Auto-warm with the default engine on startup (skip with --no-cache-warm)
-    if !std::env::args().any(|a| a == "--no-cache-warm") {
+    // Cache warm on startup (opt-in with --cache-warm)
+    if std::env::args().any(|a| a == "--cache-warm") {
         warm_archive_cache(&wdc.write_dir, &engine_dir).await;
     }
     // Note: multiplayer games may use a different engine — handle_connect_spring

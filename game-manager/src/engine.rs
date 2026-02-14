@@ -83,19 +83,25 @@ pub fn find_engine_dir(spring_home: &Path, version: Option<&str>) -> anyhow::Res
         );
     }
 
-    // Find latest — sort directory entries by name, take last
-    let mut entries: Vec<PathBuf> = std::fs::read_dir(&engines_base)
+    // Find latest by modification time — most recently written engine dir wins.
+    // This naturally picks the engine the lobby server last downloaded.
+    let mut entries: Vec<(PathBuf, std::time::SystemTime)> = std::fs::read_dir(&engines_base)
         .map_err(|e| anyhow::anyhow!("Cannot read engine dir {}: {}", engines_base.display(), e))?
         .filter_map(|e| e.ok())
-        .map(|e| e.path())
-        .filter(|p| p.is_dir())
+        .filter_map(|e| {
+            let path = e.path();
+            if !path.is_dir() { return None; }
+            let mtime = e.metadata().ok()?.modified().ok()?;
+            Some((path, mtime))
+        })
         .collect();
 
-    entries.sort();
+    entries.sort_by_key(|(_, mtime)| *mtime);
 
-    let latest = entries
+    let latest = &entries
         .last()
-        .ok_or_else(|| anyhow::anyhow!("No engine versions found in {}", engines_base.display()))?;
+        .ok_or_else(|| anyhow::anyhow!("No engine versions found in {}", engines_base.display()))?
+        .0;
 
     // Verify spring-headless exists
     let headless_bin = latest.join("spring-headless");

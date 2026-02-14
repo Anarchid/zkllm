@@ -9,10 +9,12 @@
  *   npm start
  *
  * Required environment variables (see .env.example):
- *   ANTHROPIC_API_KEY  - Anthropic API key
+ *   ANTHROPIC_API_KEY  - Anthropic API key (for provider=anthropic)
+ *   GROQ_API_KEY       - Groq API key (for provider=groq)
  *
  * Optional:
- *   GAME_MANAGER_BIN  - Path to game-manager binary
+ *   PROVIDER           - "anthropic" (default) or "groq"
+ *   GAME_MANAGER_BIN   - Path to game-manager binary
  *   WRITE_DIR         - Agent write directory (default: ~/.spring-loom)
  *   MAP               - Map name (default: Comet Catcher Redux v3.1)
  *   OPPONENT          - Opponent AI (default: NullAI)
@@ -23,7 +25,8 @@
  */
 
 import 'dotenv/config';
-import { Membrane, AnthropicAdapter } from 'membrane';
+import { Membrane, AnthropicAdapter, OpenAICompatibleAdapter, NativeFormatter } from 'membrane';
+import type { ProviderAdapter, PrefillFormatter } from 'membrane';
 import { AgentFramework, MCPLModule, ApiServer } from '@connectome/agent-framework';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -33,9 +36,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 import { WakeModule } from './wake-module.js';
 
 const config = {
-  anthropic: {
-    apiKey: process.env.ANTHROPIC_API_KEY!,
-  },
+  provider: (process.env.PROVIDER || 'anthropic') as 'anthropic' | 'groq',
   gmBin: process.env.GAME_MANAGER_BIN || resolve(__dirname, '../../game-manager/target/release/game-manager'),
   writeDir: process.env.WRITE_DIR || resolve(homedir(), '.spring-loom'),
   map: process.env.MAP || 'Fairyland v1.0',
@@ -46,7 +47,29 @@ const config = {
   zkPassword: process.env.ZK_PASSWORD || '',
 };
 
-const required = ['ANTHROPIC_API_KEY'];
+const providerConfigs = {
+  anthropic: {
+    envKey: 'ANTHROPIC_API_KEY',
+    model: 'claude-sonnet-4-5-20250929',
+    createAdapter: (): ProviderAdapter =>
+      new AnthropicAdapter({ apiKey: process.env.ANTHROPIC_API_KEY! }),
+    formatter: undefined as PrefillFormatter | undefined,
+  },
+  groq: {
+    envKey: 'GROQ_API_KEY',
+    model: 'moonshotai/kimi-k2-instruct-0905',
+    createAdapter: (): ProviderAdapter =>
+      new OpenAICompatibleAdapter({
+        baseURL: 'https://api.groq.com/openai/v1',
+        apiKey: process.env.GROQ_API_KEY!,
+        providerName: 'groq',
+      }),
+    formatter: new NativeFormatter() as PrefillFormatter,
+  },
+};
+
+const providerCfg = providerConfigs[config.provider];
+const required = [providerCfg.envKey];
 if (config.playMode === 'lobby') {
   required.push('ZK_USERNAME', 'ZK_PASSWORD');
 }
@@ -177,9 +200,9 @@ Defense:
 - \`turretheavylaser\` — Stardust (medium laser turret)
 
 **Opening pattern** (your first factory is FREE and instant via "facplop"):
-1. Build a \`factorycloak\` with your commander — it's placed instantly at no cost!
-2. Immediately queue factory production: \`cloakcon\` then 2-3 \`cloakraid\`
-3. While factory produces, use your commander to build 3 \`staticmex\` on nearby metal spots
+1. Place \`factorycloak\` near your commander — use the commander's position from its unit_finished event as x/z. Example: \`{"type":"build","unit_id":CMD_ID,"build_def_name":"factorycloak","x":CMD_X,"z":CMD_Z,"queue":false}\`. It's placed instantly at no cost!
+2. The new factory sends a \`unit_finished\` event with its unit ID. Use that ID to queue production: \`cloakcon\` then 2-3 \`cloakraid\` (omit x/y/z for factory production).
+3. While factory produces, use your commander to build 3 \`staticmex\` on nearby metal spots (use x/z from the metal_spots data in the init event).
 4. Build 2-3 \`energysolar\` to balance energy
 5. Expand to more metal spots with constructors
 6. Scout the enemy with raiders, attack when you have an advantage
@@ -222,10 +245,10 @@ Note: You can see spectator chat (messages prefixed with \`s:\`). **Do not repea
 async function main() {
   console.log('Starting Zero-K gameplay agent...\n');
 
-  const adapter = new AnthropicAdapter({
-    apiKey: config.anthropic.apiKey,
+  const adapter = providerCfg.createAdapter();
+  const membrane = new Membrane(adapter, {
+    ...(providerCfg.formatter ? { formatter: providerCfg.formatter } : {}),
   });
-  const membrane = new Membrane(adapter);
 
   const wake = new WakeModule();
 
@@ -243,7 +266,7 @@ async function main() {
     agents: [
       {
         name: 'commander',
-        model: 'claude-sonnet-4-5-20250929',
+        model: providerCfg.model,
         systemPrompt: SYSTEM_PROMPT,
       },
     ],
@@ -298,8 +321,8 @@ async function main() {
 4. Add opponent: call zk:lobby_add_bot with ai_lib "${config.opponent}"
 5. Start: call zk:lobby_start_battle
 
-Then set wake conditions for the "unit_finished" event — this is when your commander spawns and you learn its unit ID. When you wake, begin your opening: build factorycloak FIRST (it's free and instant!), queue production (cloakcon + cloakraid), then build 3 staticmex on metal spots with your commander, then 2-3 energysolar.`
-      : `Start a local game: call zk:lobby_start_game with map "${config.map}", opponent "${config.opponent}", and player_mode: true. Then set wake conditions for the "unit_finished" event — this is when your commander spawns and you learn its unit ID. When you wake, begin your opening: build factorycloak FIRST (it's free and instant!), queue production (cloakcon + cloakraid), then build 3 staticmex on metal spots with your commander, then 2-3 energysolar.`;
+Then set wake conditions for the "unit_finished" event — this is when your commander spawns and you learn its unit ID and position. When you wake, begin your opening: place factorycloak at your commander's x/z position (include coordinates!), then queue production on the new factory (omit coords for that), then build 3 staticmex on metal spots with your commander, then 2-3 energysolar.`
+      : `Start a local game: call zk:lobby_start_game with map "${config.map}", opponent "${config.opponent}", and player_mode: true. Then set wake conditions for the "unit_finished" event — this is when your commander spawns and you learn its unit ID and position. When you wake, begin your opening: place factorycloak at your commander's x/z position (include coordinates!), then queue production on the new factory (omit coords for that), then build 3 staticmex on metal spots with your commander, then 2-3 energysolar.`;
 
   framework.pushEvent({
     type: 'external-message',
@@ -319,6 +342,7 @@ Then set wake conditions for the "unit_finished" event — this is when your com
   console.log('\n' + '='.repeat(50));
   console.log('Zero-K gameplay agent running');
   console.log('='.repeat(50));
+  console.log(`Provider:    ${config.provider} (${providerCfg.model})`);
   console.log(`Play mode:   ${config.playMode}`);
   console.log(`GameManager: ${config.gmBin}`);
   console.log(`Write dir:   ${config.writeDir}`);
