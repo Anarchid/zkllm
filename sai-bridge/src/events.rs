@@ -221,6 +221,8 @@ pub enum GameEvent {
         builder: i32,
         #[serde(skip_serializing_if = "Option::is_none")]
         builder_name: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        pos: Option<[f32; 3]>,
     },
 
     #[serde(rename = "unit_finished")]
@@ -228,6 +230,8 @@ pub enum GameEvent {
         unit: i32,
         #[serde(skip_serializing_if = "Option::is_none")]
         unit_name: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        pos: Option<[f32; 3]>,
     },
 
     #[serde(rename = "unit_idle")]
@@ -291,6 +295,8 @@ pub enum GameEvent {
         enemy: i32,
         #[serde(skip_serializing_if = "Option::is_none")]
         enemy_name: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        pos: Option<[f32; 3]>,
     },
 
     #[serde(rename = "enemy_leave_los")]
@@ -418,11 +424,12 @@ pub unsafe fn parse_event(topic: c_int, data: *const c_void) -> Option<GameEvent
                 unit_name: None,
                 builder: e.builder,
                 builder_name: None,
+                pos: None,
             })
         }
         EVENT_UNIT_FINISHED => {
             let e = &*(data as *const SUnitFinishedEvent);
-            Some(GameEvent::UnitFinished { unit: e.unit, unit_name: None })
+            Some(GameEvent::UnitFinished { unit: e.unit, unit_name: None, pos: None })
         }
         EVENT_UNIT_IDLE => {
             let e = &*(data as *const SUnitIdleEvent);
@@ -474,7 +481,7 @@ pub unsafe fn parse_event(topic: c_int, data: *const c_void) -> Option<GameEvent
         }
         EVENT_ENEMY_ENTER_LOS => {
             let e = &*(data as *const SEnemyEnterLOSEvent);
-            Some(GameEvent::EnemyEnterLos { enemy: e.enemy, enemy_name: None })
+            Some(GameEvent::EnemyEnterLos { enemy: e.enemy, enemy_name: None, pos: None })
         }
         EVENT_ENEMY_LEAVE_LOS => {
             let e = &*(data as *const SEnemyLeaveLOSEvent);
@@ -566,11 +573,15 @@ fn resolve_unit_name(cb: &EngineCallbacks, unit_id: i32) -> Option<String> {
 /// Enrich a parsed event with human-readable unit names from the engine.
 pub fn enrich_event(event: &mut GameEvent, cb: &EngineCallbacks) {
     match event {
-        GameEvent::UnitCreated { unit, unit_name, builder, builder_name, .. } => {
+        GameEvent::UnitCreated { unit, unit_name, builder, builder_name, pos, .. } => {
             *unit_name = resolve_unit_name(cb, *unit);
             *builder_name = resolve_unit_name(cb, *builder);
+            *pos = Some(cb.unit_get_pos(*unit));
         }
-        GameEvent::UnitFinished { unit, unit_name, .. } |
+        GameEvent::UnitFinished { unit, unit_name, pos, .. } => {
+            *unit_name = resolve_unit_name(cb, *unit);
+            *pos = Some(cb.unit_get_pos(*unit));
+        }
         GameEvent::UnitIdle { unit, unit_name, .. } |
         GameEvent::UnitMoveFailed { unit, unit_name, .. } => {
             *unit_name = resolve_unit_name(cb, *unit);
@@ -584,7 +595,10 @@ pub fn enrich_event(event: &mut GameEvent, cb: &EngineCallbacks) {
         GameEvent::UnitCaptured { unit, unit_name, .. } => {
             *unit_name = resolve_unit_name(cb, *unit);
         }
-        GameEvent::EnemyEnterLos { enemy, enemy_name, .. } |
+        GameEvent::EnemyEnterLos { enemy, enemy_name, pos, .. } => {
+            *enemy_name = resolve_unit_name(cb, *enemy);
+            *pos = Some(cb.unit_get_pos(*enemy));
+        }
         GameEvent::EnemyLeaveLos { enemy, enemy_name, .. } |
         GameEvent::EnemyEnterRadar { enemy, enemy_name, .. } |
         GameEvent::EnemyLeaveRadar { enemy, enemy_name, .. } |

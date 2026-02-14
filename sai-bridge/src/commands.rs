@@ -37,8 +37,11 @@ pub enum GameCommand {
         build_def_id: i32,
         #[serde(default)]
         build_def_name: Option<String>,
+        #[serde(default)]
         x: f32,
+        #[serde(default)]
         y: f32,
+        #[serde(default)]
         z: f32,
         #[serde(default)]
         facing: i32,
@@ -194,17 +197,21 @@ pub fn dispatch(cb: &EngineCallbacks, cmd: &GameCommand) -> Result<(), String> {
             } else {
                 *build_def_id
             };
-            // Snap to closest valid build position (handles ZK's precise blockmap)
-            let requested_pos: [c_float; 3] = [*x, *y, *z];
-            let mut pos = cb
-                .map_find_closest_build_site(def_id, &requested_pos, 200.0, 0, *facing)
-                .ok_or_else(|| {
-                    format!(
-                        "No valid build position found near ({}, {}, {}) for def {}",
-                        x, y, z,
-                        build_def_name.as_deref().unwrap_or("?")
-                    )
-                })?;
+            // For factory production (no coords), pass [0,0,0] directly.
+            // For construction (has coords), snap to closest valid build position.
+            let mut pos: [c_float; 3] = if *x == 0.0 && *y == 0.0 && *z == 0.0 {
+                [0.0, 0.0, 0.0]
+            } else {
+                let requested_pos: [c_float; 3] = [*x, *y, *z];
+                cb.map_find_closest_build_site(def_id, &requested_pos, 200.0, 0, *facing)
+                    .ok_or_else(|| {
+                        format!(
+                            "No valid build position found near ({}, {}, {}) for def {}",
+                            x, y, z,
+                            build_def_name.as_deref().unwrap_or("?")
+                        )
+                    })?
+            };
             let mut data = SBuildUnitCommand {
                 unit_id: *unit_id as c_int,
                 group_id: -1,

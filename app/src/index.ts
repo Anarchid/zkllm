@@ -176,13 +176,13 @@ Defense:
 - \`turretmissile\` — Picket (light AA turret)
 - \`turretheavylaser\` — Stardust (medium laser turret)
 
-**Opening pattern**:
-1. Build 2-3 \`staticmex\` on nearby metal spots with your commander
-2. Build a \`factorycloak\` (or another factory)
-3. Produce \`cloakcon\` (constructors) and \`cloakraid\` (raiders) from the factory
-4. Expand to more metal spots with constructors
-5. Scout the enemy with raiders
-6. Attack when you have an advantage
+**Opening pattern** (your first factory is FREE and instant via "facplop"):
+1. Build a \`factorycloak\` with your commander — it's placed instantly at no cost!
+2. Immediately queue factory production: \`cloakcon\` then 2-3 \`cloakraid\`
+3. While factory produces, use your commander to build 3 \`staticmex\` on nearby metal spots
+4. Build 2-3 \`energysolar\` to balance energy
+5. Expand to more metal spots with constructors
+6. Scout the enemy with raiders, attack when you have an advantage
 
 Map coordinates: x and z are horizontal (map plane), y is height (usually 0 for ground level).
 
@@ -298,8 +298,8 @@ async function main() {
 4. Add opponent: call zk:lobby_add_bot with ai_lib "${config.opponent}"
 5. Start: call zk:lobby_start_battle
 
-Then set wake conditions for the "unit_finished" event — this is when your commander spawns and you learn its unit ID. When you wake, begin your opening: build staticmex on the nearest metal spots with your commander, then a factorycloak.`
-      : `Start a local game: call zk:lobby_start_game with map "${config.map}", opponent "${config.opponent}", and player_mode: true. Then set wake conditions for the "unit_finished" event — this is when your commander spawns and you learn its unit ID. When you wake, begin your opening: build staticmex on the nearest metal spots with your commander, then a factorycloak.`;
+Then set wake conditions for the "unit_finished" event — this is when your commander spawns and you learn its unit ID. When you wake, begin your opening: build factorycloak FIRST (it's free and instant!), queue production (cloakcon + cloakraid), then build 3 staticmex on metal spots with your commander, then 2-3 energysolar.`
+      : `Start a local game: call zk:lobby_start_game with map "${config.map}", opponent "${config.opponent}", and player_mode: true. Then set wake conditions for the "unit_finished" event — this is when your commander spawns and you learn its unit ID. When you wake, begin your opening: build factorycloak FIRST (it's free and instant!), queue production (cloakcon + cloakraid), then build 3 staticmex on metal spots with your commander, then 2-3 energysolar.`;
 
   framework.pushEvent({
     type: 'external-message',

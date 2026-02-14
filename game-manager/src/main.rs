@@ -1782,7 +1782,7 @@ async fn main() -> anyhow::Result<()> {
     gm.mcpl = Some(mcpl_conn);
 
     // Engine check interval
-    let mut engine_check = tokio::time::interval(tokio::time::Duration::from_secs(2));
+    let mut engine_check = tokio::time::interval(tokio::time::Duration::from_millis(100));
 
     // Main event loop
     loop {

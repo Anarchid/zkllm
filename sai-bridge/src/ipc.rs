@@ -18,6 +18,8 @@ pub struct IpcClient {
     stream: UnixStream,
     reader: BufReader<UnixStream>,
     read_buf: String,
+    /// Outbound buffer for events that couldn't be written immediately.
+    write_buf: Vec<u8>,
 }
 
 impl IpcClient {
@@ -33,27 +35,51 @@ impl IpcClient {
             stream,
             reader: BufReader::new(reader_stream),
             read_buf: String::new(),
+            write_buf: Vec::new(),
         })
     }
 
-    /// Send a game event to GameManager.
-    /// Temporarily switches to blocking mode for the write.
+    /// Send a game event to GameManager (non-blocking).
+    /// Appends to an internal buffer and drains as much as the socket will accept.
+    /// Never blocks the engine thread — drops oldest data if buffer exceeds 256KB.
     pub fn send_event(&mut self, event: &GameEvent) -> io::Result<()> {
         let json = serde_json::to_string(event).map_err(|e| io::Error::other(e.to_string()))?;
+        self.write_buf.extend_from_slice(json.as_bytes());
+        self.write_buf.push(b'\n');
 
-        // Briefly switch to blocking for reliable write
-        self.stream.set_nonblocking(false)?;
-        self.stream.write_all(json.as_bytes())?;
-        self.stream.write_all(b"\n")?;
-        self.stream.flush()?;
-        self.stream.set_nonblocking(true)?;
+        // Cap buffer at 256KB — if downstream is that far behind, drop oldest data
+        const MAX_BUF: usize = 256 * 1024;
+        if self.write_buf.len() > MAX_BUF {
+            let drop = self.write_buf.len() - MAX_BUF;
+            self.write_buf.drain(..drop);
+        }
 
+        self.flush_write_buf();
         Ok(())
+    }
+
+    /// Try to drain the write buffer without blocking.
+    /// Called from send_event and poll_commands.
+    fn flush_write_buf(&mut self) {
+        while !self.write_buf.is_empty() {
+            match self.stream.write(&self.write_buf) {
+                Ok(0) => break, // socket closed
+                Ok(n) => {
+                    self.write_buf.drain(..n);
+                }
+                Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => break,
+                Err(_) => break,
+            }
+        }
     }
 
     /// Poll for commands from GameManager (non-blocking).
     /// Returns any complete commands received since last poll.
+    /// Also drains the outbound write buffer.
     pub fn poll_commands(&mut self) -> Vec<GameCommand> {
+        // Opportunistically flush pending writes
+        self.flush_write_buf();
+
         let mut commands = Vec::new();
 
         loop {

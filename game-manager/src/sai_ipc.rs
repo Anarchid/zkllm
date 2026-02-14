@@ -46,12 +46,16 @@ pub enum SaiEvent {
         builder: i32,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         builder_name: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pos: Option<[f32; 3]>,
     },
     #[serde(rename = "unit_finished")]
     UnitFinished {
         unit: i32,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         unit_name: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pos: Option<[f32; 3]>,
     },
     #[serde(rename = "unit_idle")]
     UnitIdle {
@@ -108,6 +112,8 @@ pub enum SaiEvent {
         enemy: i32,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         enemy_name: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pos: Option<[f32; 3]>,
     },
     #[serde(rename = "enemy_leave_los")]
     EnemyLeaveLos {

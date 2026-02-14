@@ -90,6 +90,13 @@ impl EngineCallbacks {
         call!(self, Unit_getDef, self.ai_id, unit_id)
     }
 
+    /// Get a unit's current position as [x, y, z].
+    pub fn unit_get_pos(&self, unit_id: i32) -> [f32; 3] {
+        let mut pos = [0.0f32; 3];
+        call!(self, Unit_getPos, self.ai_id, unit_id, pos.as_mut_ptr());
+        pos
+    }
+
     /// Get the internal name of a unit definition (e.g. "cloakraid").
     pub fn unit_def_get_name(&self, unit_def_id: i32) -> Option<String> {
         let ptr = call!(self, UnitDef_getName, self.ai_id, unit_def_id);
